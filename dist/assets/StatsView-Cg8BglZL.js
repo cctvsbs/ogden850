@@ -1,0 +1,1 @@
+import{m as e,x as t}from"./index-Bf-cCxeF.js";import{t as n}from"./_plugin-vue_export-helper-BDNMzG2s.js";var r={},i={class:`p-8 text-center`,style:{color:`var(--text-muted)`}};function a(n,r){return t(),e(`div`,i,` 学习统计 — Sprint 3 实现 `)}var o=n(r,[[`render`,a]]);export{o as default};
