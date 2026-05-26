@@ -10,9 +10,7 @@ import WordCard from '@/components/WordCard.vue'
 const store = useWordsStore()
 const router = useRouter()
 
-const viewMode = ref('grid')
 const filterStatus = ref('all')
-const frequencyFilter = ref(0)
 const showFavoritesOnly = ref(false)
 const showMistakesOnly = ref(false)
 const wordListRef = ref(null)
@@ -27,27 +25,23 @@ const mistakeWordIds = ref([])
 
 const displayWords = computed(() => {
   let result = store.filteredWords
-  
+
   if (showMistakesOnly.value) {
     result = result.filter(w => mistakeWordIds.value.includes(w.id))
     return result
   }
-  
+
   if (showFavoritesOnly.value) {
     result = result.filter(w => favoriteIds.value.includes(w.id))
     return result
   }
-  
+
   if (filterStatus.value === 'mastered') {
     result = result.filter(w => (w.stage || 0) >= 5)
   } else if (filterStatus.value === 'unmastered') {
     result = result.filter(w => (w.stage || 0) < 5)
   }
-  
-  if (frequencyFilter.value > 0) {
-    result = result.filter(w => (w.frequency || 0) >= frequencyFilter.value)
-  }
-  
+
   return result
 })
 
@@ -86,31 +80,8 @@ async function reloadFavorites() {
   }
 }
 
-function getPosTag(category) {
-  const map = { operations: '操作词', thingsGeneral: '名词', thingsPicturable: '名词', qualitiesGeneral: '形容词', qualitiesOpposite: '形容词' }
-  return map[category] || ''
-}
-
-function downloadExcel() {
-  const headers = ['英文单词', '中文意思', '音标', '词性']
-  const rows = store.words.map(w => [w.word, w.chinese, w.phonetic, getPosTag(w.category)])
-  const BOM = '\uFEFF'
-  const csvContent = BOM + [headers, ...rows].map(row => row.map(cell => `"${(cell || '').replace(/"/g, '""')}"`).join(',')).join('\n')
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = 'Ogden850_' + new Date().toISOString().slice(0, 10) + '.csv'
-  link.click()
-  URL.revokeObjectURL(url)
-}
-
-function downloadPDF() {
-  const rows = store.words.map(w => `<tr><td>${w.word}</td><td>${w.chinese}</td><td>${w.phonetic || ''}</td><td>${getPosTag(w.category)}</td></tr>`).join('')
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Ogden 850 Word List</title><style>body{font-family:sans-serif;padding:20px}h1{font-size:18px;margin-bottom:5px}p{font-size:12px;color:#666;margin-bottom:15px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border:1px solid #ddd;padding:4px 8px;text-align:left}th{background:#f5f5f5}@media print{button{display:none}}</style></head><body><h1>Ogden 850 Basic English Word List</h1><p>Total: 850 words | Date: ${new Date().toISOString().slice(0,10)}</p><table><thead><tr><th>Word</th><th>Chinese</th><th>Phonetic</th><th>POS</th></tr></thead><tbody>${rows}</tbody></table><p style="text-align:center;margin-top:20px"><button onclick="window.print()" style="padding:10px 30px;font-size:14px">🖨️ 打印 / 导出 PDF</button></p></body></html>`
-  const win = window.open('', '_blank', 'width=900,height=700')
-  win.document.write(html)
-  win.document.close()
+function goToPractice(mode) {
+  router.push(`/practice?mode=${mode}`)
 }
 
 async function loadStats() {
@@ -125,9 +96,12 @@ onMounted(async () => {
   loadStats()
   reloadMistakeWords()
   reloadFavorites()
+  // 预热语音引擎
   const warmUp = new SpeechSynthesisUtterance('')
   warmUp.volume = 0
   window.speechSynthesis.speak(warmUp)
+  // 预加载语音列表
+  window.speechSynthesis.getVoices()
   const today = new Date().toISOString().slice(0, 10)
   const lastVisit = localStorage.getItem('ogden850-streak')
   if (lastVisit !== today) {
@@ -167,47 +141,38 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- 开始训练按钮 -->
-<div class="flex justify-center gap-4 sm:gap-6 mb-4 sm:mb-6 flex-shrink-0">
-  <button @click="router.push('/practice')"
-    class="group relative px-8 sm:px-10 py-3 sm:py-3.5 text-base sm:text-lg rounded-xl sm:rounded-2xl font-bold transition-all duration-300 hover:scale-105 overflow-hidden"
-    :style="{ backgroundColor: 'var(--accent)', color: '#1A1A2E' }">
-    <span class="relative z-10">⚡ 开始训练</span>
-    <div class="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-0 transition-transform duration-300"></div>
-  </button>
-  <button @click="router.push('/phonetic')"
-    class="group relative px-8 sm:px-10 py-3 sm:py-3.5 text-base sm:text-lg rounded-xl sm:rounded-2xl font-bold transition-all duration-300 hover:scale-105 overflow-hidden"
-    :style="{ backgroundColor: 'var(--accent)', color: '#1A1A2E' }">
-    <span class="relative z-10">🔤 发音训练</span>
-    <div class="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-0 transition-transform duration-300"></div>
-  </button>
-</div>
+    <!-- 四个训练按钮 -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 mb-4 sm:mb-6 flex-shrink-0">
+      <button @click="goToPractice('flashcard')"
+        class="px-3 sm:px-4 py-3 sm:py-4 rounded-xl sm:rounded-2xl font-bold text-sm sm:text-base transition-all duration-300 hover:scale-105 cursor-pointer"
+        :style="{ backgroundColor: 'var(--accent)', color: '#1A1A2E' }">
+        🃏 闪卡背词
+      </button>
+      <button @click="goToPractice('choice')"
+        class="px-3 sm:px-4 py-3 sm:py-4 rounded-xl sm:rounded-2xl font-bold text-sm sm:text-base transition-all duration-300 hover:scale-105 cursor-pointer"
+        :style="{ backgroundColor: 'var(--accent)', color: '#1A1A2E' }">
+        📝 词意单选
+      </button>
+      <button @click="goToPractice('spelling')"
+        class="px-3 sm:px-4 py-3 sm:py-4 rounded-xl sm:rounded-2xl font-bold text-sm sm:text-base transition-all duration-300 hover:scale-105 cursor-pointer"
+        :style="{ backgroundColor: 'var(--accent)', color: '#1A1A2E' }">
+        ⌨️ 拼词训练
+      </button>
+      <button @click="goToPractice('expression')"
+        class="px-3 sm:px-4 py-3 sm:py-4 rounded-xl sm:rounded-2xl font-bold text-sm sm:text-base transition-all duration-300 hover:scale-105 cursor-pointer"
+        :style="{ backgroundColor: 'var(--accent)', color: '#1A1A2E' }">
+        💬 拼句训练
+      </button>
+    </div>
 
-    
-
-    <!-- 搜索 + 下载按钮 -->
-    <div class="flex-shrink-0 space-y-2 sm:space-y-3 mb-3 sm:mb-4" style="position: sticky; top: 0; z-index: 10; background: var(--bg-primary); padding-bottom: 6px;">
+    <!-- 搜索 + 分类 -->
+    <div class="flex-shrink-0 space-y-2 sm:space-y-3 mb-3 sm:mb-4">
       <div class="flex items-center gap-2">
         <div class="flex-1">
           <SearchBar :modelValue="store.searchQuery" @update:modelValue="store.searchQuery = $event" />
         </div>
-        <div class="flex gap-1 sm:gap-1.5 flex-shrink-0">
-          <button @click="downloadExcel"
-            class="px-2 sm:px-2.5 py-1.5 sm:py-2 rounded-full text-[10px] sm:text-xs font-medium cursor-pointer transition-all hover:opacity-80 border"
-            :style="{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border)', color: 'var(--text-secondary)' }"
-            title="下载 Excel 格式单词表">📥 Excel</button>
-          <button @click="downloadPDF"
-            class="px-2 sm:px-2.5 py-1.5 sm:py-2 rounded-full text-[10px] sm:text-xs font-medium cursor-pointer transition-all hover:opacity-80 border"
-            :style="{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border)', color: 'var(--text-secondary)' }"
-            title="下载 PDF 格式单词表">📄 PDF</button>
-          <a href="https://dn710107.ca.archive.org/0/items/ogdens-basic-english-words-list-alphabetic/Ogden%27s%20Basic%20English%20Words%20List%20alphabetic.pdf"
-            target="_blank"
-            class="px-2 sm:px-2.5 py-1.5 sm:py-2 rounded-full text-[10px] sm:text-xs font-medium cursor-pointer transition-all hover:opacity-80 border no-underline inline-flex items-center"
-            :style="{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border)', color: 'var(--text-secondary)' }"
-            title="下载 OGDEN's BASIC ENGLISH 原版 PDF">📖 原档</a>
-        </div>
       </div>
-      
+
       <div class="flex items-center justify-between gap-2 flex-wrap">
         <div class="flex flex-wrap gap-1 sm:gap-1.5">
           <button v-for="cat in store.categories" :key="cat.id" @click="store.activeCategory = cat.id; showMistakesOnly = false; showFavoritesOnly = false"
@@ -215,32 +180,16 @@ onMounted(async () => {
             :style="store.activeCategory === cat.id ? { backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#1A1A2E', fontWeight: '600' } : { backgroundColor: 'transparent', borderColor: 'var(--border)', color: 'var(--text-secondary)' }">
             {{ cat.label }}<span class="ml-0.5 sm:ml-1 opacity-60">{{ cat.count }}</span>
           </button>
-          <button @click="viewMode = viewMode === 'list' ? 'grid' : 'list'"
-            class="px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs rounded-full border cursor-pointer transition-all whitespace-nowrap"
-            :style="{ backgroundColor: 'transparent', borderColor: 'var(--border)', color: 'var(--text-secondary)' }"
-            :title="viewMode === 'list' ? '切换卡片视图' : '切换列表视图'">{{ viewMode === 'list' ? '▦ 卡片' : '☰ 列表' }}</button>
         </div>
         <div class="flex gap-1 sm:gap-1.5">
-          <button @click="frequencyFilter = frequencyFilter === 5 ? 0 : 5"
-            class="px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs rounded-full border cursor-pointer transition-all whitespace-nowrap"
-            :style="frequencyFilter === 5 ? { backgroundColor: 'var(--clay)', borderColor: 'var(--clay)', color: '#fff', fontWeight: '600' } : { backgroundColor: 'transparent', borderColor: 'var(--border)', color: 'var(--text-secondary)' }"
-            title="筛选使用频率 5 星单词">★★★★★</button>
-          <button @click="frequencyFilter = frequencyFilter === 4 ? 0 : 4"
-            class="px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs rounded-full border cursor-pointer transition-all whitespace-nowrap"
-            :style="frequencyFilter === 4 ? { backgroundColor: 'var(--clay)', borderColor: 'var(--clay)', color: '#fff', fontWeight: '600' } : { backgroundColor: 'transparent', borderColor: 'var(--border)', color: 'var(--text-secondary)' }"
-            title="筛选使用频率 4 星及以上单词">★★★★☆</button>
-          <button @click="frequencyFilter = frequencyFilter === 3 ? 0 : 3"
-            class="px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs rounded-full border cursor-pointer transition-all whitespace-nowrap"
-            :style="frequencyFilter === 3 ? { backgroundColor: 'var(--clay)', borderColor: 'var(--clay)', color: '#fff', fontWeight: '600' } : { backgroundColor: 'transparent', borderColor: 'var(--border)', color: 'var(--text-secondary)' }"
-            title="筛选使用频率 3 星及以上单词">★★★☆☆</button>
           <button @click="toggleMistakesMode"
             class="px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs rounded-full border cursor-pointer transition-all whitespace-nowrap"
             :style="showMistakesOnly ? { backgroundColor: '#b13e3e', borderColor: '#b13e3e', color: '#fff', fontWeight: '600' } : { backgroundColor: 'transparent', borderColor: 'var(--border)', color: 'var(--text-secondary)' }"
-            title="错题集：查看所有拼写错误的单词">❌ 错题集</button>
+            title="错题集">❌ 错题集</button>
           <button @click="toggleFavoritesMode"
             class="px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs rounded-full border cursor-pointer transition-all whitespace-nowrap"
             :style="showFavoritesOnly ? { backgroundColor: '#c96f0e', borderColor: '#c96f0e', color: '#fff', fontWeight: '600' } : { backgroundColor: 'transparent', borderColor: 'var(--border)', color: 'var(--text-secondary)' }"
-            title="收藏夹：查看所有收藏的单词">⭐ 收藏夹</button>
+            title="收藏夹">⭐ 收藏夹</button>
         </div>
       </div>
     </div>
@@ -250,19 +199,19 @@ onMounted(async () => {
       <WordList
         ref="wordListRef"
         :words="displayWords"
-        :viewMode="viewMode"
+        :viewMode="'grid'"
         @select="onWordClick"
         @favorite-changed="reloadFavorites"
       />
     </div>
 
-    <WordCard :word="store.selectedWord" 
-  :visible="!!store.selectedWord" 
-  :wordList="displayWords"
-  :currentIndex="displayWords.findIndex(w => w.id === store.selectedWord?.id)"
-  @close="store.clearSelection" 
-  @favorite-changed="reloadFavorites"
-  @select-word="onWordClick" />
+    <WordCard :word="store.selectedWord"
+      :visible="!!store.selectedWord"
+      :wordList="displayWords"
+      :currentIndex="displayWords.findIndex(w => w.id === store.selectedWord?.id)"
+      @close="store.clearSelection"
+      @favorite-changed="reloadFavorites"
+      @select-word="onWordClick" />
   </div>
 </template>
 

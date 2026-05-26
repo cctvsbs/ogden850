@@ -20,12 +20,6 @@ const routes = [
     meta: { title: '训练模式' }
   },
   {
-    path: '/phonetic',
-    name: 'phonetic',
-    component: () => import('@/views/PhoneticTrainer.vue'),
-    meta: { title: '英语发音可视化训练' }
-  },
-  {
     path: '/stats',
     name: 'stats',
     component: () => import('@/views/StatsView.vue'),

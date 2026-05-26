@@ -13,6 +13,10 @@ const selectedWord = ref(null)
 const favoriteIds = ref(new Set())
 const mistakeWordIds = ref([])
 const isMuted = ref(false)
+const speechRate = ref(0.85) // 默认 0.85，对应 1.0x 档位
+const rateOptions = [0.5, 0.75, 1.0, 1.25, 1.5]
+const rateLabels = ['0.5x', '0.75x', '1x', '1.25x', '1.5x']
+const currentRateIndex = ref(2) // 默认 1x
 
 const syllableColors = ['#4A90D9', '#52B788', '#E8864A', '#D94A8F', '#8B5CF6']
 
@@ -48,16 +52,26 @@ function playNavSound() {
 }
 
 let isSpeaking = false; let lastSpokenText = ''
+let speechTimeout = null
 function speakWord(word) {
   if (!word) return
   if (isSpeaking && word === lastSpokenText) return
   window.speechSynthesis.cancel()
+  if (speechTimeout) clearTimeout(speechTimeout)
   isSpeaking = true; lastSpokenText = word
   const utterance = new SpeechSynthesisUtterance(word)
-  utterance.lang = 'en-US'; utterance.rate = 0.85
+  utterance.lang = 'en-US'
+  utterance.rate = speechRate.value
   utterance.onend = () => { isSpeaking = false }
   utterance.onerror = () => { isSpeaking = false }
+  // 超时兜底：3 秒还没触发 onend 就重置状态
+  speechTimeout = setTimeout(() => { isSpeaking = false }, 3000)
   window.speechSynthesis.speak(utterance)
+}
+
+function setSpeechRate(index) {
+  currentRateIndex.value = index
+  speechRate.value = rateOptions[index]
 }
 
 const filteredWords = computed(() => {
@@ -91,43 +105,24 @@ function renderSyls(syls, stress) {
 }
 
 function renderPhon(ipa, stress) {
-  // 1. 去掉前后多余的斜杠、空格
   let p = ipa.replace(/^\/|\/$/g, '').trim();
-  
-  // 2. 拥抱数据标准：统一使用“点”或者“空格”来物理切开多音节
   let parts = p.includes('.') ? p.split('.') : p.split(' ');
-  
-  // 过滤掉因为手误产生的空音节
   parts = parts.map(s => s.trim()).filter(Boolean);
-
-  // 3. 遍历每个独立的音节，精细控制 HTML 结构
   const colored = parts.map((part, i) => {
-    // 捕获可能藏在音节最前面的重音标记 ˈ 或 ˌ
     const stressMatch = part.match(/^[ˈˌ]/);
     const stressSymbol = stressMatch ? stressMatch[0] : '';
-    
-    // 纯音标字母本身（剔除符号干扰）
-    const pureCleanPart = part.replace(/^[ˈˌ]/, ''); 
-
-    // 获取对应的层级颜色
+    const pureCleanPart = part.replace(/^[ˈˌ]/, '');
     const c = syllableColors[i % syllableColors.length];
     const isStressed = i === stress;
-    
     const baseStyle = `color:${c};`;
-    // 精准加粗、下划线，外加 3px 的完美视觉偏移量
     const underlineStyle = isStressed ? 'font-weight:700;text-decoration:underline;text-underline-offset:3px;' : '';
-
-    // 【核心修正】：符号跟字母物理分离包裹，下划线永远只落在纯音标上！
     let partHtml = '';
     if (stressSymbol) {
       partHtml += `<span style="${baseStyle}">${stressSymbol}</span>`;
     }
     partHtml += `<span style="${baseStyle}${underlineStyle}">${pureCleanPart}</span>`;
-
     return partHtml;
-  }).join(' '); // 4. 完美：2音节、3音节之间用一个标准空格隔开
-
-  // 5. 组装输出
+  }).join(' ');
   return `<span style="color:#999">/</span>${colored}<span style="color:#999">/</span>`;
 }
 
@@ -149,7 +144,18 @@ const currentPhonInfo = computed(() => {
   return getPhonInfo(selectedWord.value.word)
 })
 
-function selectWord(word) { selectedWord.value = word }
+function selectWord(word) {
+  selectedWord.value = word
+  // 移动端选中后自动滚动到可视区域
+  if (window.innerWidth < 768 && word) {
+    nextTick(() => {
+      const el = document.querySelector(`[data-word-id="${word.id}"]`)
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
+    })
+  }
+}
+
+import { nextTick } from 'vue'
 
 function navigateWord(dir) {
   const list = filteredWords.value
@@ -158,6 +164,12 @@ function navigateWord(dir) {
   const newIdx = dir === -1 ? (idx <= 0 ? list.length - 1 : idx - 1) : (idx >= list.length - 1 ? 0 : idx + 1)
   playNavSound()
   selectedWord.value = list[newIdx]
+  if (window.innerWidth < 768) {
+    nextTick(() => {
+      const el = document.querySelector(`[data-word-id="${list[newIdx].id}"]`)
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
+    })
+  }
 }
 
 function handleKeydown(e) {
@@ -177,12 +189,16 @@ onMounted(async () => {
   mistakeWordIds.value = [...new Set(mList.map(m => m.wordId))]
   window.addEventListener('keydown', handleKeydown)
 })
-onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeydown)
+  if (speechTimeout) clearTimeout(speechTimeout)
+})
 </script>
 
 <template>
   <div class="w-full max-w-2xl mx-auto px-3 sm:px-6 py-4 sm:py-8 flex flex-col" style="height: calc(100vh - 100px);">
     
+    <!-- 标题区 -->
     <div class="text-center flex-shrink-0 mb-3">
       <h1 class="text-lg sm:text-xl font-bold word-display" :style="{ color: 'var(--text)' }">🔤 英语发音可视化训练</h1>
       <p class="text-[10px] sm:text-xs opacity-50 mt-0.5" :style="{ color: 'var(--text-muted)' }">
@@ -190,6 +206,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
       </p>
     </div>
 
+    <!-- 搜索 + 分类 -->
     <div class="flex-shrink-0 space-y-2 mb-3">
       <div class="flex items-center gap-2">
         <input v-model="searchQuery" type="text" placeholder="输入单词，如：chocolate"
@@ -225,6 +242,26 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
 
       <template v-if="selectedWord && currentPhonInfo">
         
+        <!-- 单词名 + 发音小喇叭 + 变速 -->
+        <div class="flex items-center justify-center gap-3 mb-5">
+          <span class="text-2xl sm:text-3xl font-bold" :style="{ color: 'var(--text)' }">{{ selectedWord.word }}</span>
+          <button @click="speakWord(selectedWord.word)"
+            class="text-2xl cursor-pointer transition-all hover:scale-110 active:scale-95"
+            :style="{ color: 'var(--accent)' }" title="发音 (S)">🔊</button>
+        </div>
+
+        <!-- 变速档位 -->
+        <div class="flex items-center justify-center gap-1.5 mb-5">
+          <button v-for="(label, idx) in rateLabels" :key="idx"
+            @click="setSpeechRate(idx)"
+            class="px-2.5 py-1 text-[11px] rounded-full transition-all cursor-pointer border"
+            :style="currentRateIndex === idx
+              ? { backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#1A1A2E', fontWeight: '600' }
+              : { backgroundColor: 'transparent', borderColor: 'var(--border)', color: 'var(--text-secondary)' }">
+            {{ label }}
+          </button>
+        </div>
+
         <!-- 书面口语相同 -->
         <template v-if="!isDifferent(currentPhonInfo)">
           <div class="mb-5">
@@ -259,46 +296,36 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
         </template>
 
         <p class="text-base sm:text-lg font-medium mt-4 mb-2" style="color:#E8864A">💡 {{ currentPhonInfo.note }}</p>
-        <p class="text-sm sm:text-base mt-2 mb-1 opacity-50 leading-relaxed" :style="{ color: 'var(--text-muted)' }">
+        <p class="text-sm sm:text-base mt-2 mb-4 opacity-50 leading-relaxed" :style="{ color: 'var(--text-muted)' }">
           📖 拼写 {{ currentPhonInfo.written.syllables.length }} 音节 · 🗣️ 口语 ≈{{ currentPhonInfo.spoken.syllables.length }} 音节（弱读压缩）
         </p>
-        <p class="text-xs sm:text-sm mt-1 mb-4 opacity-50" :style="{ color: 'var(--text-muted)' }">下划线 = 重音音节</p>
 
-        <div class="flex items-center justify-center gap-3 mt-5">
-          <button @click="navigateWord(-1)" class="px-3 py-1.5 rounded-full text-xs cursor-pointer border"
-            :style="{ borderColor: 'var(--border)', color: 'var(--text-secondary)' }" title="上一个 (A)">← A 上一个</button>
-          <button @click="speakWord(selectedWord.word)"
-            class="px-5 py-2 rounded-full text-sm cursor-pointer transition-all hover:scale-105"
-            :style="{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text)' }">🔊 发音 (S)</button>
-          <button @click="(e) => toggleFavorite(e, selectedWord.id)"
-            class="px-3 py-2 rounded-full text-lg cursor-pointer transition-all hover:scale-105"
-            :style="{ backgroundColor: 'var(--bg-secondary)', color: isFavorite(selectedWord.id) ? '#f59e0b' : 'var(--text-muted)' }"
-            :title="isFavorite(selectedWord.id) ? '取消收藏 (F)' : '添加收藏 (F)'">{{ isFavorite(selectedWord.id) ? '⭐' : '☆' }}</button>
-          <button @click="navigateWord(1)" class="px-3 py-1.5 rounded-full text-xs cursor-pointer border"
-            :style="{ borderColor: 'var(--border)', color: 'var(--text-secondary)' }" title="下一个 (D)">D 下一个 →</button>
-        </div>
-
-        <p class="text-center text-[10px] mt-4 opacity-50" :style="{ color: 'var(--text-muted)' }">
+        <!-- 快捷键提示放大 -->
+        <p class="text-center text-sm sm:text-base mt-4 opacity-60" :style="{ color: 'var(--text)' }">
           按 <kbd>S</kbd> 发音 · <kbd>A</kbd> 上一个 · <kbd>D</kbd> 下一个 · <kbd>F</kbd> 收藏 · <kbd>Esc</kbd> 清除
         </p>
       </template>
     </div>
 
     <!-- ========== 单词列表 ========== -->
-    <div class="flex-1 overflow-y-auto hide-scrollbar rounded-2xl p-4"
+    <!-- PC/平板：纵向滚动 -->
+    <div
+      class="flex-1 overflow-y-auto hide-scrollbar rounded-2xl p-4 word-list-desktop"
+      :class="{ 'word-list-mobile': true }"
       :style="{ backgroundColor: 'var(--bg)', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }">
       
-      <div v-if="viewMode === 'list'" class="space-y-1">
+      <div v-if="viewMode === 'list'" class="space-y-1 word-list-inner">
         <div v-for="word in filteredWords" :key="word.id"
+          :data-word-id="word.id"
           @click="selectWord(word)"
-          class="flex items-center justify-between px-3 py-2.5 rounded-xl cursor-pointer transition-all duration-200"
+          class="flex items-center justify-between px-3 py-2.5 rounded-xl cursor-pointer transition-all duration-200 word-list-item"
           :style="selectedWord?.id === word.id ? { backgroundColor: 'var(--bg-secondary)' } : {}">
           <div class="flex items-center gap-3">
             <span class="text-base sm:text-lg font-semibold" :style="{ color: 'var(--text)' }">{{ word.word }}</span>
             <span class="text-[10px] sm:text-xs" :style="{ color: 'var(--text-muted)' }">{{ word.phonetic }}</span>
           </div>
           <div class="flex items-center gap-2">
-            <button @click="(e) => toggleFavorite(e, word.id)" class="text-sm cursor-pointer"
+            <button @click="(e) => toggleFavorite(e, word.id)" class="text-sm cursor-pointer flex-shrink-0"
               :style="{ color: isFavorite(word.id) ? '#f59e0b' : 'var(--text-muted)' }">{{ isFavorite(word.id) ? '⭐' : '☆' }}</button>
             <span class="text-xs" :style="{ color: 'var(--text-secondary)' }">{{ word.chinese }}</span>
           </div>
@@ -306,10 +333,11 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
         <div v-if="filteredWords.length === 0" class="text-center py-10 text-sm" :style="{ color: 'var(--text-muted)' }">没有匹配的单词</div>
       </div>
 
-      <div v-else class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+      <div v-else class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 word-list-inner">
         <div v-for="word in filteredWords" :key="word.id"
+          :data-word-id="word.id"
           @click="selectWord(word)"
-          class="p-3 rounded-xl cursor-pointer transition-all duration-200 border relative"
+          class="p-3 rounded-xl cursor-pointer transition-all duration-200 border relative word-list-item"
           :style="selectedWord?.id === word.id ? { backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--accent)' } : { backgroundColor: 'var(--bg)', borderColor: 'var(--border)' }">
           <button @click="(e) => toggleFavorite(e, word.id)" class="absolute top-1 right-1 text-xs cursor-pointer"
             :style="{ color: isFavorite(word.id) ? '#f59e0b' : 'var(--text-muted)' }">{{ isFavorite(word.id) ? '⭐' : '☆' }}</button>
@@ -321,6 +349,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
       </div>
     </div>
 
+    <!-- 底部图例 -->
     <p class="text-center text-[10px] mt-3 flex-shrink-0 opacity-40" :style="{ color: 'var(--text-muted)' }">
       颜色：<span style="color:#4A90D9">蓝</span> <span style="color:#52B788">绿</span> <span style="color:#E8864A">橙</span> <span style="color:#D94A8F">粉</span> &nbsp; 划线=重音
     </p>
@@ -330,5 +359,69 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
 <style scoped>
 .hide-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
 .hide-scrollbar::-webkit-scrollbar { display: none; }
-kbd { background: #1e1e1c; padding: 2px 6px; border-radius: 20px; margin: 0 2px; font-size: 0.6rem; color: #e3dccc; }
+kbd {
+  background: #1e1e1c;
+  padding: 2px 8px;
+  border-radius: 4px;
+  margin: 0 2px;
+  font-size: 0.8rem;
+  color: #e3dccc;
+  font-family: inherit;
+}
+
+/* ===== PC/平板：纵向滚动（默认） ===== */
+.word-list-desktop .word-list-inner {
+  display: block;
+}
+
+/* ===== 移动端：横向滚动 ===== */
+@media (max-width: 767px) {
+  .word-list-mobile {
+    overflow-y: hidden !important;
+    overflow-x: auto !important;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x mandatory;
+    padding: 8px 4px;
+  }
+  
+  .word-list-mobile .word-list-inner {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    gap: 8px;
+    width: max-content;
+  }
+  
+  .word-list-mobile .word-list-item {
+    flex-shrink: 0;
+    scroll-snap-align: center;
+    min-width: 140px;
+    max-width: 200px;
+    white-space: normal;
+  }
+  
+  /* 列表模式下也变成横向卡片 */
+  .word-list-mobile .space-y-1.word-list-inner {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    gap: 8px;
+  }
+  
+  .word-list-mobile .space-y-1 .word-list-item {
+    flex-shrink: 0;
+    scroll-snap-align: center;
+    min-width: 150px;
+    max-width: 220px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    padding: 12px;
+  }
+  
+  .word-list-mobile .space-y-1 .word-list-item > div:last-child {
+    flex-direction: row;
+    width: 100%;
+    justify-content: space-between;
+  }
+}
 </style>

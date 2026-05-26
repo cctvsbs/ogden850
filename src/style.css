@@ -9,7 +9,7 @@
   --color-clay: #C05C48;
 }
 
-/* ===== 三主题 CSS 变量 ===== */
+/* ===== 四主题 CSS 变量 ===== */
 :root, [data-theme="cream"] {
   --bg: #F5F0E8;
   --bg-secondary: #EDE6D9;
@@ -58,7 +58,23 @@
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
-/* ===== 全局接管（借鉴眼镜店风格）===== */
+[data-theme="green"] {
+  --bg: #C5D9BF;
+  --bg-secondary: #AFC5A8;
+  --bg-card: #DDE8D9;
+  --text: #162315;
+  --text-secondary: #354633;
+  --text-muted: #536951;
+  --border: #96AB93;
+  --accent: #356134;
+  --accent-hover: #2B4F2A;
+  --success: #2C5F2C;
+  --danger: #9B463D;
+  --shadow-sm: 0 1px 3px rgba(22, 35, 21, 0.06);
+  --shadow-md: 0 4px 12px rgba(22, 35, 21, 0.08);
+}
+
+/* ===== 全局接管 ===== */
 html, body, #app {
   height: 100%;
   margin: 0;
@@ -78,7 +94,6 @@ body {
   display: block;
 }
 
-/* 重置所有组件内的 CSS 变量引用 */
 *, *::before, *::after {
   box-sizing: border-box;
 }
