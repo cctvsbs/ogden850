@@ -1,12 +1,13 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useWordsStore } from '@/stores/words'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { progressService, statsService, mistakesService, favoritesService } from '@/services/storageService'
 import { getExampleStatus } from '@/utils/ogdenValidator'
 
 const store = useWordsStore()
 const router = useRouter()
+const route = useRoute()
 
 const mode = ref('flashcard')
 
@@ -18,6 +19,13 @@ function getModeFromQuery() {
 }
 const queryMode = getModeFromQuery()
 if (queryMode) { mode.value = queryMode; window.history.replaceState({}, '', window.location.pathname) }
+
+// 监听路由变化切换模式
+watch(() => route.query.mode, (newMode) => {
+  if (newMode && ['flashcard', 'choice', 'spelling', 'expression'].includes(newMode)) {
+    switchMode(newMode)
+  }
+})
 
 const audioCtx = ref(null)
 function getAudioCtx() { if (!audioCtx.value) audioCtx.value = new (window.AudioContext || window.webkitAudioContext)(); return audioCtx.value }
@@ -84,8 +92,6 @@ const PEXELS_API_KEY = 'w9QWceT1L1oYUifqA4dVeVJx7hML4lxQrKj2vPlUC4Zvd4KElIAFeJlb
 const imageCache = new Map(); const currentImageUrl = ref(null); const imageLoading = ref(false); let currentImageRequestId = 0
 const abstractWords = new Set(['a','an','the','of','or','and','but','if','as','at','by','for','in','on','to','with','from','than','that','this','it','its','be','is','am','are','was','were','been','being','have','has','had','having','do','does','did','doing','will','would','can','could','may','might','shall','should','not','no','nor','so','yet','just','only','also','even','still','very','too','quite','such','all','some','any','every','each','both','few','more','most','much','many','enough','he','she','they','we','you','i','me','him','her','us','them','my','your','his','our','their','who','whom','here','there','where','when','why','how','what','which','then','now','ago','before','after','while','though','although','because','since','until','till','once','ever','never','always','often','sometimes','maybe','perhaps','really','almost','hardly','off','up','down','over','under','out','back','away','yes','no','please','well','together','between','among','other','another','same','different','own','one','two','three'])
 const isOffline = ref(false)
-function loadOfflineMode() { const saved = localStorage.getItem('ogden850-offline'); isOffline.value = saved === 'true' }
-function toggleOffline() { isOffline.value = !isOffline.value; localStorage.setItem('ogden850-offline', isOffline.value) }
 function initQueue() { const pool = store.dueWords.length > 0 ? [...store.dueWords] : [...store.unmasteredWords]; const shuffled = pool.sort(() => Math.random() - 0.5); queue.value = shuffled.slice(0, 20); currentIndex.value = 0; isFlipped.value = false; stats.value = { again: 0, hard: 0, good: 0, easy: 0 }; saveAllProgress() }
 const currentCard = computed(() => queue.value.length === 0 ? null : queue.value[currentIndex.value])
 const flashcardProgressPercent = computed(() => queue.value.length === 0 ? 100 : ((currentIndex.value + 1) / queue.value.length) * 100)
@@ -130,7 +136,7 @@ const spellingSlotContainer = ref(null)
 const spellingCursor = ref(0)
 const spellingUserInput = ref({})
 
-function initSpellingMode() { const pool = store.dueWords.length > 0 ? [...store.dueWords] : [...store.unmasteredWords]; const shuffled = pool.sort(() => Math.random() - 0.5); spellingQueue.value = shuffled.slice(0, spellingRoundSize); spellingIndex.value = 0; isSpellingSubmitted.value = false; isSpellingCorrect.value = false; spellingStats.value = { correct: 0, wrong: 0, hints: 0 }; spellingHintLetters.value = []; hidePhonetic.value = true; spellingSlowMode.value = false; selectedRate.value = 1.0; spellingCursor.value = 0; spellingUserInput.value = {}; nextTick(() => spellingSlotContainer.value?.focus()) }
+function initSpellingMode() { const pool = store.dueWords.length > 0 ? [...store.dueWords] : [...store.unmasteredWords]; const shuffled = pool.sort(() => Math.random() - 0.5); spellingQueue.value = shuffled.slice(0, spellingRoundSize); spellingIndex.value = 0; isSpellingSubmitted.value = false; isSpellingCorrect.value = false; spellingStats.value = { correct: 0, wrong: 0, hints: 0 }; spellingHintLetters.value = []; hidePhonetic.value = true; spellingSlowMode.value = false; selectedRate.value = 1.0; spellingCursor.value = 0; spellingUserInput.value = {}; nextTick(() => focusSpellingSlots()) }
 const currentSpelling = computed(() => spellingQueue.value.length === 0 ? null : spellingQueue.value[spellingIndex.value])
 const spellingFinished = computed(() => spellingQueue.value.length > 0 && spellingIndex.value >= spellingQueue.value.length)
 const spellingProgressPercent = computed(() => spellingQueue.value.length === 0 ? 0 : (spellingIndex.value / spellingQueue.value.length) * 100)
@@ -141,9 +147,7 @@ const spellingLetterSlots = computed(() => {
   const hintedSet = new Set(spellingHintLetters.value)
   return target.split('').map((char, i) => {
     const userChar = spellingUserInput.value[i]
-    if (userChar !== undefined) {
-      return { char, display: userChar, status: userChar.toLowerCase() === char.toLowerCase() ? 'filled' : 'wrong' }
-    }
+    if (userChar !== undefined) return { char, display: userChar, status: userChar.toLowerCase() === char.toLowerCase() ? 'filled' : 'wrong' }
     if (hintedSet.has(i)) return { char, display: char, status: 'hinted' }
     return { char, display: '_', status: 'pending' }
   })
@@ -154,11 +158,16 @@ const spellingAllCorrect = computed(() => {
   return spellingLetterSlots.value.every(s => s.status === 'filled')
 })
 
-watch(spellingAllCorrect, (val) => {
-  if (val) setTimeout(() => submitSpelling(), 300)
-})
+watch(spellingAllCorrect, (val) => { if (val) setTimeout(() => submitSpelling(), 300) })
 
-function focusSpellingSlots() { spellingSlotContainer.value?.focus() }
+function focusSpellingSlots() {
+  const el = spellingSlotContainer.value
+  if (!el) return
+  el.focus({ preventScroll: true })
+  el.setAttribute('contenteditable', 'true')
+  el.click()
+  setTimeout(() => el.setAttribute('contenteditable', 'false'), 100)
+}
 function setSpellingCursor(idx) { spellingCursor.value = idx; focusSpellingSlots() }
 
 function handleSpellingKeydown(e) {
@@ -167,17 +176,10 @@ function handleSpellingKeydown(e) {
   if (/^[a-zA-Z]$/.test(key)) {
     e.preventDefault()
     spellingUserInput.value[spellingCursor.value] = key
-    if (spellingCursor.value < spellingLetterSlots.value.length - 1) {
-      spellingCursor.value++
-    }
+    if (spellingCursor.value < spellingLetterSlots.value.length - 1) spellingCursor.value++
     return
   }
-  if (key === 'Backspace') {
-    e.preventDefault()
-    delete spellingUserInput.value[spellingCursor.value]
-    if (spellingCursor.value > 0) spellingCursor.value--
-    return
-  }
+  if (key === 'Backspace') { e.preventDefault(); delete spellingUserInput.value[spellingCursor.value]; if (spellingCursor.value > 0) spellingCursor.value--; return }
   if (key === 'ArrowLeft') { e.preventDefault(); if (spellingCursor.value > 0) spellingCursor.value--; return }
   if (key === 'ArrowRight') { e.preventDefault(); if (spellingCursor.value < spellingLetterSlots.value.length - 1) spellingCursor.value++; return }
 }
@@ -185,7 +187,7 @@ function handleSpellingKeydown(e) {
 function showSpellingHint() { if (isSpellingSubmitted.value || !currentSpelling.value) return; spellingStats.value.hints++; const word = currentSpelling.value.word; const hintedSet = new Set(spellingHintLetters.value); const unhinted = word.split('').map((_, i) => i).filter(i => !hintedSet.has(i)); if (unhinted.length === 0) { spellingHintLetters.value = []; return }; const randomIdx = unhinted[Math.floor(Math.random() * unhinted.length)]; spellingHintLetters.value = [...spellingHintLetters.value, randomIdx]; saveAllProgress() }
 function clearSpellingHints() { spellingHintLetters.value = []; saveAllProgress() }
 
-function submitSpelling() { if (isSpellingSubmitted.value || !currentSpelling.value) return; const answer = spellingLetterSlots.value.map(s => s.display).join(''); const correct = answer.toLowerCase() === currentSpelling.value.word.toLowerCase(); isSpellingSubmitted.value = true; isSpellingCorrect.value = correct; if (correct) { spellingStats.value.correct++; store.updateWordProgress(currentSpelling.value.id, { stage: (currentSpelling.value.stage || 0) + 1, srs: { ...currentSpelling.value.srs, nextReview: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() } }); mistakesService.removeMistakeByWordId(currentSpelling.value.id) } else { spellingStats.value.wrong++; mistakesService.addMistake(currentSpelling.value.id, 'spelling', answer, currentSpelling.value.word, currentSpelling.value.word, currentSpelling.value.chinese) }; playChoiceSound(correct); saveAllProgress(); setTimeout(() => { if (spellingIndex.value + 1 >= spellingQueue.value.length) { spellingIndex.value++; saveAllProgress(); setTimeout(() => playFinishSound(), 100) } else { spellingIndex.value++; isSpellingSubmitted.value = false; isSpellingCorrect.value = false; spellingHintLetters.value = []; hidePhonetic.value = true; spellingSlowMode.value = false; selectedRate.value = 1.0; spellingCursor.value = 0; spellingUserInput.value = {}; nextTick(() => spellingSlotContainer.value?.focus()) } }, 1200) }
+function submitSpelling() { if (isSpellingSubmitted.value || !currentSpelling.value) return; const answer = spellingLetterSlots.value.map(s => s.display).join(''); const correct = answer.toLowerCase() === currentSpelling.value.word.toLowerCase(); isSpellingSubmitted.value = true; isSpellingCorrect.value = correct; if (correct) { spellingStats.value.correct++; store.updateWordProgress(currentSpelling.value.id, { stage: (currentSpelling.value.stage || 0) + 1, srs: { ...currentSpelling.value.srs, nextReview: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() } }); mistakesService.removeMistakeByWordId(currentSpelling.value.id) } else { spellingStats.value.wrong++; mistakesService.addMistake(currentSpelling.value.id, 'spelling', answer, currentSpelling.value.word, currentSpelling.value.word, currentSpelling.value.chinese) }; playChoiceSound(correct); saveAllProgress(); setTimeout(() => { if (spellingIndex.value + 1 >= spellingQueue.value.length) { spellingIndex.value++; saveAllProgress(); setTimeout(() => playFinishSound(), 100) } else { spellingIndex.value++; isSpellingSubmitted.value = false; isSpellingCorrect.value = false; spellingHintLetters.value = []; hidePhonetic.value = true; spellingSlowMode.value = false; selectedRate.value = 1.0; spellingCursor.value = 0; spellingUserInput.value = {}; nextTick(() => focusSpellingSlots()) } }, 1200) }
 function restartSpelling() { initSpellingMode() }
 
 // ===== 收藏 =====
@@ -244,7 +246,14 @@ const expressionAllCorrect = computed(() => {
 watch(expressionAllCorrect, (val) => { if (val) setTimeout(() => submitExpression(), 400) })
 const hintedWordObjects = computed(() => { if (!currentExpression.value) return []; const words = parseAnswerToWords(currentExpression.value.answer); return expressionHintWords.value.map(i => words[i]).filter(Boolean) })
 function getSlotDisplay(slot) { return slot.display }
-function focusExpressionSlots() { expressionSlotContainer.value?.focus() }
+function focusExpressionSlots() {
+  const el = expressionSlotContainer.value
+  if (!el) return
+  el.focus({ preventScroll: true })
+  el.setAttribute('contenteditable', 'true')
+  el.click()
+  setTimeout(() => el.setAttribute('contenteditable', 'false'), 100)
+}
 function setExpressionCursor(wi, si) { expressionCursor.value = { wordIndex: wi, letterIndex: si }; focusExpressionSlots() }
 function findNextSlot(wi, si) { const slots = expressionLetterSlots.value.words; for (let j = si + 1; j < slots[wi].slots.length; j++) { if (slots[wi].slots[j].status !== 'auto') return { wordIndex: wi, letterIndex: j } } for (let i = wi + 1; i < slots.length; i++) { for (let j = 0; j < slots[i].slots.length; j++) { if (slots[i].slots[j].status !== 'auto') return { wordIndex: i, letterIndex: j } } } return null }
 function findPrevSlot(wi, si) { const slots = expressionLetterSlots.value.words; for (let j = si - 1; j >= 0; j--) { if (slots[wi].slots[j].status !== 'auto') return { wordIndex: wi, letterIndex: j } } for (let i = wi - 1; i >= 0; i--) { for (let j = slots[i].slots.length - 1; j >= 0; j--) { if (slots[i].slots[j].status !== 'auto') return { wordIndex: i, letterIndex: j } } } return null }
@@ -268,7 +277,7 @@ function handleKeydown(e) {
 }
 function switchMode(newMode) { mode.value = newMode; if (newMode === 'choice' && choiceQueue.value.length === 0) initChoiceMode(); if (newMode === 'spelling' && spellingQueue.value.length === 0) initSpellingMode(); if (newMode === 'expression' && expressionTasks.value.length === 0) initExpressionMode() }
 
-onMounted(async () => { await store.loadProgress(); loadAllProgress(); loadOfflineMode(); initVoices(); window.addEventListener('keydown', handleKeydown); if (queue.value.length > 0 && !isOffline.value) loadImageForCurrent(); if (queryMode) { if (queryMode === 'choice' && choiceQueue.value.length === 0) initChoiceMode(); if (queryMode === 'spelling' && spellingQueue.value.length === 0) initSpellingMode(); if (queryMode === 'expression' && expressionTasks.value.length === 0) initExpressionMode() } })
+onMounted(async () => { await store.loadProgress(); loadAllProgress(); initVoices(); window.addEventListener('keydown', handleKeydown); if (queue.value.length > 0 && !isOffline.value) loadImageForCurrent(); if (queryMode) { if (queryMode === 'choice' && choiceQueue.value.length === 0) initChoiceMode(); if (queryMode === 'spelling' && spellingQueue.value.length === 0) initSpellingMode(); if (queryMode === 'expression' && expressionTasks.value.length === 0) initExpressionMode() } })
 onUnmounted(() => { window.removeEventListener('keydown', handleKeydown); clearAllTimers(); window.speechSynthesis.cancel() })
 </script>
 
@@ -279,17 +288,16 @@ onUnmounted(() => { window.removeEventListener('keydown', handleKeydown); clearA
       <button @click="switchMode('choice')" class="px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-full text-xs sm:text-sm font-semibold transition-all cursor-pointer" :style="mode === 'choice' ? { backgroundColor: 'var(--accent)', color: '#1A1A2E' } : { backgroundColor: 'var(--bg-secondary)', color: 'var(--text-secondary)' }">📝 选择</button>
       <button @click="switchMode('spelling')" class="px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-full text-xs sm:text-sm font-semibold transition-all cursor-pointer" :style="mode === 'spelling' ? { backgroundColor: 'var(--accent)', color: '#1A1A2E' } : { backgroundColor: 'var(--bg-secondary)', color: 'var(--text-secondary)' }">⌨️ 拼写</button>
       <button @click="switchMode('expression')" class="px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-full text-xs sm:text-sm font-semibold transition-all cursor-pointer" :style="mode === 'expression' ? { backgroundColor: 'var(--accent)', color: '#1A1A2E' } : { backgroundColor: 'var(--bg-secondary)', color: 'var(--text-secondary)' }">💬 表达</button>
-      <button @click="toggleOffline" class="px-3 sm:px-4 py-2 sm:py-2.5 rounded-full text-xs sm:text-sm font-medium transition-all cursor-pointer border" :style="isOffline ? { backgroundColor: 'var(--clay)', borderColor: 'var(--clay)', color: '#fff' } : { backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border)', color: 'var(--text-secondary)' }" :title="isOffline ? '离线模式：不加载图片' : '在线模式：加载配图'">📵 {{ isOffline ? '离线' : '在线' }}</button>
     </div>
 
-    <!-- ==================== 闪卡 ==================== -->
+        <!-- ==================== 闪卡 ==================== -->
     <template v-if="mode === 'flashcard'">
       <div class="mb-4 sm:mb-6"><div class="flex justify-between text-xs font-medium mb-2" :style="{ color: 'var(--text-muted)' }"><span>📖 学习进度</span><span>第 {{ currentIndex + 1 }} / {{ queue.length }} 张</span></div><div class="h-1 rounded-full" :style="{ backgroundColor: 'var(--bg-secondary)' }"><div class="h-full rounded-full transition-all duration-300" :style="{ width: flashcardProgressPercent + '%', backgroundColor: 'var(--success)' }"></div></div></div>
       <template v-if="!flashcardFinished && currentCard">
         <div class="mb-4 sm:mb-6 cursor-pointer" style="perspective: 1400px;" @click="toggleFlip"><div class="relative w-full transition-transform duration-500" style="transform-style: preserve-3d; min-height: 450px;" :style="{ transform: isFlipped ? 'rotateY(180deg)' : '' }">
           <div class="absolute inset-0 rounded-3xl p-6 sm:p-8 flex flex-col justify-between" style="backface-visibility: hidden;" :style="{ backgroundColor: 'var(--bg)', boxShadow: '0 10px 25px -10px rgba(0,0,0,0.08), 0 0 0 1px var(--border)' }">
-            <div class="flex-1 flex flex-col justify-center items-center"><p class="text-5xl sm:text-6xl font-bold mb-2 word-display" :style="{ color: 'var(--text)' }">{{ currentCard.word }}</p><span class="text-xs sm:text-sm px-3 sm:px-4 py-1 rounded-full mt-2" :style="{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text-muted)' }">{{ currentCard.phonetic }}</span><div class="mt-4 sm:mt-6 rounded-2xl flex items-center justify-center overflow-hidden w-full" :style="{ backgroundColor: 'var(--bg-secondary)', minHeight: '200px' }"><img v-if="currentImageUrl" :src="currentImageUrl" class="w-full max-h-48 object-cover" alt="illustration" /><div v-else class="text-xs sm:text-sm py-8 flex flex-col items-center justify-center" :style="{ color: 'var(--text-muted)' }"><span v-if="imageLoading && !isOffline" class="animate-pulse">🎨 加载中...</span><span v-else-if="isOffline">📵 离线模式</span><span v-else>🖼️ 暂无图片</span></div></div></div><p class="text-xs text-center mt-3" :style="{ color: 'var(--text-muted)' }">⤴️ 点击/空格翻面</p></div>
-          <div class="absolute inset-0 rounded-3xl p-5 sm:p-8 flex flex-col justify-between overflow-y-auto" style="backface-visibility: hidden; transform: rotateY(180deg);" :style="{ backgroundColor: 'var(--bg)', boxShadow: '0 10px 25px -10px rgba(0,0,0,0.08), 0 0 0 1px var(--border)' }"><div class="flex-1"><div class="mb-3 sm:mb-4 pb-2 sm:pb-3 border-b" :style="{ borderColor: 'var(--border)' }"><p class="text-[10px] sm:text-xs uppercase font-semibold" :style="{ color: 'var(--accent)' }">📖 单词</p><p class="text-lg sm:text-xl font-bold mt-1" :style="{ color: 'var(--text)' }">{{ currentCard.word }}</p></div><div class="mb-3 sm:mb-4 pb-2 sm:pb-3 border-b" :style="{ borderColor: 'var(--border)' }"><p class="text-[10px] sm:text-xs uppercase font-semibold" :style="{ color: 'var(--accent)' }">🗣️ 音标</p><p class="text-base sm:text-lg mt-1" :style="{ color: 'var(--text-muted)' }">{{ currentCard.phonetic }}</p></div><div v-if="currentCard.examples?.[0]" class="mb-3 sm:mb-4"><p class="text-[10px] sm:text-xs uppercase font-semibold" :style="{ color: 'var(--accent)' }">📝 例句</p><div class="mt-2 p-2.5 sm:p-3 rounded-2xl" :style="{ backgroundColor: 'var(--bg-secondary)' }"><p class="text-sm sm:text-base leading-relaxed mb-1" :style="{ color: 'var(--text)' }"><template v-for="(token, ti) in splitExampleTokens(currentCard.examples[0].en)" :key="ti"><span :class="isOodWord(token.word) ? 'border-b-2 border-dotted border-red-400 text-red-600 cursor-help' : ''" :title="isOodWord(token.word) ? '⚠️ 超纲词' : ''">{{ token.word }}</span>{{ token.space }}</template></p><p class="text-xs sm:text-sm" :style="{ color: 'var(--accent)' }">{{ currentCard.examples[0].zh }}</p></div></div></div>
+            <div class="flex-1 flex flex-col justify-center items-center"><p class="text-5xl sm:text-6xl font-bold mb-2 word-display" :style="{ color: 'var(--text)' }">{{ currentCard.word }}</p><span class="text-xs sm:text-sm px-3 sm:px-4 py-1 rounded-full mt-2" :style="{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text-muted)' }">{{ currentCard.phonetic }}</span><div class="mt-4 sm:mt-6 rounded-2xl flex items-center justify-center overflow-hidden w-full" :style="{ backgroundColor: 'var(--bg-secondary)', minHeight: '200px' }"><img v-if="currentImageUrl" :src="currentImageUrl" class="w-full max-h-48 object-cover" alt="illustration" /><div v-else class="text-xs sm:text-sm py-8 flex flex-col items-center justify-center" :style="{ color: 'var(--text-muted)' }"><span v-if="imageLoading && !isOffline" class="animate-pulse">🎨 加载中...</span><span v-else>🖼️ 暂无图片</span></div></div></div><p class="text-xs text-center mt-3" :style="{ color: 'var(--text-muted)' }">⤴️ 点击/空格翻面</p></div>
+          <div class="absolute inset-0 rounded-3xl p-5 sm:p-8 flex flex-col justify-between overflow-y-auto" style="backface-visibility: hidden; transform: rotateY(180deg);" :style="{ backgroundColor: 'var(--bg)', boxShadow: '0 10px 25px -10px rgba(0,0,0,0.08), 0 0 0 1px var(--border)' }"><div class="flex-1"><div class="mb-3 sm:mb-4 pb-2 sm:pb-3 border-b" :style="{ borderColor: 'var(--border)' }"><p class="text-[10px] sm:text-xs uppercase font-semibold" :style="{ color: 'var(--accent)' }">📖 单词</p><p class="text-lg sm:text-xl font-bold mt-1" :style="{ color: 'var(--text)' }">{{ currentCard.word }}<span class="mx-3 sm:mx-4 opacity-30" :style="{ color: 'var(--text-muted)' }">|</span><span class="text-base sm:text-lg font-medium" :style="{ color: 'var(--accent)' }">{{ currentCard.chinese }}</span></p></div><div class="mb-3 sm:mb-4 pb-2 sm:pb-3 border-b" :style="{ borderColor: 'var(--border)' }"><p class="text-[10px] sm:text-xs uppercase font-semibold" :style="{ color: 'var(--accent)' }">🗣️ 音标</p><p class="text-base sm:text-lg mt-1" :style="{ color: 'var(--text-muted)' }">{{ currentCard.phonetic }}</p></div><div v-if="currentCard.examples?.[0]" class="mb-3 sm:mb-4"><p class="text-[10px] sm:text-xs uppercase font-semibold" :style="{ color: 'var(--accent)' }">📝 例句</p><div class="mt-2 p-2.5 sm:p-3 rounded-2xl" :style="{ backgroundColor: 'var(--bg-secondary)' }"><p class="text-sm sm:text-base leading-relaxed mb-1" :style="{ color: 'var(--text)' }"><template v-for="(token, ti) in splitExampleTokens(currentCard.examples[0].en)" :key="ti"><span :class="isOodWord(token.word) ? 'border-b-2 border-dotted border-red-400 text-red-600 cursor-help' : ''" :title="isOodWord(token.word) ? '⚠️ 超纲词' : ''">{{ token.word }}</span>{{ token.space }}</template></p><p class="text-xs sm:text-sm" :style="{ color: 'var(--accent)' }">{{ currentCard.examples[0].zh }}</p></div></div></div>
             <div class="flex gap-2 sm:gap-3 mt-3 sm:mt-4">
               <button @click.stop="applyGrade('again')" class="flex-1 py-2 sm:py-2.5 rounded-full text-xs sm:text-sm font-bold cursor-pointer active:scale-95" :style="{ backgroundColor: '#fdeaec', color: '#b13e3e' }" title="完全忘记（1）">🔄 Again</button>
               <button @click.stop="applyGrade('hard')" class="flex-1 py-2 sm:py-2.5 rounded-full text-xs sm:text-sm font-bold cursor-pointer active:scale-95" :style="{ backgroundColor: '#fff0e0', color: '#c96f0e' }" title="想起困难（2）">⚠️ Hard</button>
@@ -317,7 +325,7 @@ onUnmounted(() => { window.removeEventListener('keydown', handleKeydown); clearA
       <div class="mb-4 sm:mb-6"><div class="flex justify-between text-xs font-medium mb-2" :style="{ color: 'var(--text-muted)' }"><span>📝 第 {{ choiceIndex + 1 > choiceQueue.length ? choiceQueue.length : choiceIndex + 1 }} / {{ choiceQueue.length }} 题</span><span>✅ {{ choiceStats.correct }} ❌ {{ choiceStats.wrong }}</span></div><div class="h-1 rounded-full" :style="{ backgroundColor: 'var(--bg-secondary)' }"><div class="h-full rounded-full transition-all duration-300" :style="{ width: choiceProgressPercent + '%', backgroundColor: 'var(--accent)' }"></div></div></div>
       <template v-if="!choiceFinished && currentChoice"><div class="rounded-2xl sm:rounded-3xl p-5 sm:p-8 mb-3 sm:mb-4 text-center" :style="{ backgroundColor: 'var(--bg)', boxShadow: '0 10px 25px -10px rgba(0,0,0,0.08)' }"><p class="text-xs sm:text-sm mb-1.5" :style="{ color: 'var(--text-muted)' }">以下单词的中文意思是？</p><p class="text-4xl sm:text-5xl font-bold word-display" :style="{ color: 'var(--text)' }">{{ currentChoice.word }}</p><p class="text-base sm:text-lg mt-1.5" :style="{ color: 'var(--text-muted)' }">{{ currentChoice.phonetic }}</p></div>
         <p v-if="!isAnswered" class="text-center text-xs mb-2" :style="{ color: 'var(--text-muted)' }">键盘：<kbd>1-4</kbd> 选择 · <kbd>Enter</kbd> 确认 · <kbd>Esc</kbd> 取消 &nbsp;|&nbsp; 鼠标：直接点击提交</p>
-        <div class="grid grid-cols-1 gap-2 sm:gap-2.5"><button v-for="(option, i) in choiceOptions" :key="i" @click="selectChoice(i)" class="w-full text-left px-4 sm:px-6 py-3 sm:py-3.5 rounded-xl sm:rounded-2xl text-base sm:text-lg font-medium transition-all cursor-pointer" :class="{ 'cursor-default': isAnswered }" :style="isAnswered ? (option.correct ? { backgroundColor: '#e3f3e0', color: '#2b7551', border: '2px solid #5fad56' } : (confirmedOption === i ? { backgroundColor: '#fdeaec', color: '#b13e3e', border: '2px solid #dc6b4a' } : { backgroundColor: 'var(--bg-secondary)', color: 'var(--text-muted)', opacity: '0.5' })) : (highlightedOption === i ? { backgroundColor: 'var(--bg-secondary)', color: 'var(--text)', border: '2px solid var(--accent)', boxShadow: '0 0 0 2px var(--accent)' } : { backgroundColor: 'var(--bg)', color: 'var(--text)', border: '2px solid var(--border)' })"><span class="inline-block w-6 h-6 sm:w-7 sm:h-7 rounded-full text-xs sm:text-sm text-center leading-6 sm:leading-7 mr-2 sm:mr-3 font-bold" :style="isAnswered && option.correct ? { backgroundColor: '#5fad56', color: '#fff' } : (isAnswered && confirmedOption === i ? { backgroundColor: '#dc6b4a', color: '#fff' } : (highlightedOption === i ? { backgroundColor: 'var(--accent)', color: '#1A1A2E' } : { backgroundColor: 'var(--bg-secondary)', color: 'var(--text-muted)' }))">{{ i + 1 }}</span>{{ option.text }}</button></div>
+        <div class="grid grid-cols-1 gap-2 sm:gap-2.5" style="max-height: 55vh; overflow-y: auto;"><button v-for="(option, i) in choiceOptions" :key="i" @click="selectChoice(i)" class="w-full text-left px-4 sm:px-6 py-3 sm:py-3.5 rounded-xl sm:rounded-2xl text-base sm:text-lg font-medium transition-all cursor-pointer" :class="{ 'cursor-default': isAnswered }" :style="isAnswered ? (option.correct ? { backgroundColor: '#e3f3e0', color: '#2b7551', border: '2px solid #5fad56' } : (confirmedOption === i ? { backgroundColor: '#fdeaec', color: '#b13e3e', border: '2px solid #dc6b4a' } : { backgroundColor: 'var(--bg-secondary)', color: 'var(--text-muted)', opacity: '0.5' })) : (highlightedOption === i ? { backgroundColor: 'var(--bg-secondary)', color: 'var(--text)', border: '2px solid var(--accent)', boxShadow: '0 0 0 2px var(--accent)' } : { backgroundColor: 'var(--bg)', color: 'var(--text)', border: '2px solid var(--border)' })"><span class="inline-block w-6 h-6 sm:w-7 sm:h-7 rounded-full text-xs sm:text-sm text-center leading-6 sm:leading-7 mr-2 sm:mr-3 font-bold" :style="isAnswered && option.correct ? { backgroundColor: '#5fad56', color: '#fff' } : (isAnswered && confirmedOption === i ? { backgroundColor: '#dc6b4a', color: '#fff' } : (highlightedOption === i ? { backgroundColor: 'var(--accent)', color: '#1A1A2E' } : { backgroundColor: 'var(--bg-secondary)', color: 'var(--text-muted)' }))">{{ i + 1 }}</span>{{ option.text }}</button></div>
         <div class="flex justify-center mt-3 sm:mt-4 gap-2 sm:gap-2.5 items-center">
           <button @click="choiceSlowMode = !choiceSlowMode; selectedRate = choiceSlowMode ? 0.75 : 1.0" class="px-2 py-1.5 rounded-full text-xs font-medium cursor-pointer border transition-all hover:opacity-80" :style="choiceSlowMode ? { backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#1A1A2E' } : { backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border)', color: 'var(--text)' }">{{ choiceSlowMode ? '🐢 0.75x' : '🚶 1x' }}</button>
           <button @click="speak" class="px-3 py-1.5 rounded-full text-xs cursor-pointer" :style="{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text)' }" title="朗读 (S)">🔊</button>
