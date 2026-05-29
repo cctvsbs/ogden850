@@ -108,12 +108,52 @@ function splitExampleTokens(sentence) { const tokens = []; const regex = /(\S+)(
 function speakFlashcardWord() { if (currentCard.value) { window.speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(currentCard.value.word); u.lang = selectedAccent.value === 'uk' ? 'en-GB' : 'en-US'; u.rate = selectedRate.value; if (currentVoice) u.voice = currentVoice; window.speechSynthesis.speak(u) } }
 function speakFlashcardExample() { if (currentCard.value?.examples?.[0]) { window.speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(currentCard.value.examples[0].en); u.lang = selectedAccent.value === 'uk' ? 'en-GB' : 'en-US'; u.rate = selectedRate.value; if (currentVoice) u.voice = currentVoice; window.speechSynthesis.speak(u) } }
 
+// ===== 安全洗牌算法 =====
+function shuffleArray(array) {
+  const arr = [...array]
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]]
+  }
+  return arr
+}
+
 // ===== 选择题 =====
 const choiceQueue = ref([]); const choiceIndex = ref(0); const choiceOptions = ref([])
 const highlightedOption = ref(null); const confirmedOption = ref(null); const isAnswered = ref(false)
 const choiceStats = ref({ correct: 0, wrong: 0 }); const roundSize = 10
-function generateOptions(correctWord) { const others = store.words.filter(w => w.id !== correctWord.id); const shuffled = [...others].sort(() => Math.random() - 0.5); const distractors = shuffled.slice(0, 3).map(w => w.chinese); return [{ text: correctWord.chinese, correct: true }, ...distractors.map(t => ({ text: t, correct: false }))].sort(() => Math.random() - 0.5) }
-function initChoiceMode() { const pool = store.dueWords.length > 0 ? [...store.dueWords] : [...store.unmasteredWords]; const shuffled = pool.sort(() => Math.random() - 0.5); choiceQueue.value = shuffled.slice(0, roundSize); choiceIndex.value = 0; choiceOptions.value = generateOptions(choiceQueue.value[0]); highlightedOption.value = null; confirmedOption.value = null; isAnswered.value = false; choiceStats.value = { correct: 0, wrong: 0 }; choiceSlowMode.value = false; selectedRate.value = 1.0 }
+
+function generateOptions(correctWord) {
+  if (!correctWord) return []
+  const others = store.words.filter(w => w.id !== correctWord.id)
+  const shuffledOthers = shuffleArray(others)
+  const distractors = shuffledOthers.slice(0, 3).map(w => w.chinese)
+  const rawOptions = [
+    { text: correctWord.chinese, correct: true },
+    ...distractors.map(t => ({ text: t, correct: false }))
+  ]
+  return shuffleArray(rawOptions)
+}
+
+function initChoiceMode() {
+  const pool = store.dueWords && store.dueWords.length > 0
+    ? [...store.dueWords]
+    : [...(store.unmasteredWords || [])]
+  if (pool.length === 0) return
+  const shuffledPool = shuffleArray(pool)
+  choiceQueue.value = shuffledPool.slice(0, roundSize)
+  choiceIndex.value = 0
+  if (choiceQueue.value[0]) {
+    choiceOptions.value = generateOptions(choiceQueue.value[0])
+  }
+  highlightedOption.value = null
+  confirmedOption.value = null
+  isAnswered.value = false
+  choiceStats.value = { correct: 0, wrong: 0 }
+  choiceSlowMode.value = false
+  selectedRate.value = 1.0
+}
+
 const currentChoice = computed(() => choiceQueue.value.length === 0 ? null : choiceQueue.value[choiceIndex.value])
 const choiceFinished = computed(() => choiceQueue.value.length > 0 && choiceIndex.value >= choiceQueue.value.length)
 const choiceProgressPercent = computed(() => choiceQueue.value.length === 0 ? 0 : (choiceIndex.value / choiceQueue.value.length) * 100)
@@ -207,7 +247,7 @@ const currentExpression = computed(() => expressionTasks.value.length === 0 ? nu
 const expressionFinished = computed(() => expressionTasks.value.length > 0 && expressionIndex.value >= expressionTasks.value.length)
 const expressionProgressPercent = computed(() => expressionTasks.value.length === 0 ? 0 : (expressionIndex.value / expressionTasks.value.length) * 100)
 function parseAnswerToWords(answer) { const rawWords = answer.split(/\s+/).filter(Boolean); return rawWords.map(w => ({ text: w, letters: w.split('') })) }
-const expressionLetterSlots = computed(() => { /* 同前 */ 
+const expressionLetterSlots = computed(() => {
   if (!currentExpression.value) return { words: [], totalLetters: 0 }
   const words = parseAnswerToWords(currentExpression.value.answer); const hintedSet = new Set(expressionHintWords.value); let totalLetters = 0
   const result = words.map((word, wi) => { const slots = word.letters.map((char, si) => { const key = `${wi}-${si}`; const isLetter = /[a-zA-Z]/.test(char); if (!isLetter) return { char, display: char, status: 'auto', key }; totalLetters++; const userChar = expressionUserInput.value[key]; if (userChar !== undefined) return { char, display: userChar, status: userChar.toLowerCase() === char.toLowerCase() ? 'filled' : 'wrong', key }; if (hintedSet.has(wi)) return { char, display: '_', status: 'hinted', key }; return { char, display: '_', status: 'pending', key } }); return { text: word.text, slots } }); return { words: result, totalLetters }
@@ -218,7 +258,7 @@ const hintedWordObjects = computed(() => { if (!currentExpression.value) return 
 function getSlotDisplay(slot) { return slot.display }
 function focusExpressionSlots() { const input = hiddenExpressionInput.value; if (input) { input.value = ' '; input.focus() } }
 function setExpressionCursor(wi, si) { expressionCursor.value = { wordIndex: wi, letterIndex: si }; focusExpressionSlots() }
-function handleHiddenExpressionInput(e) { /* 同前 */ 
+function handleHiddenExpressionInput(e) {
   if (expressionSubmitted.value) return; const input = e.target; const val = input.value
   if (val.length > 1) { const char = val.charAt(val.length - 1); if (char === ' ') { const cursor = expressionCursor.value; const slots = expressionLetterSlots.value.words; const nextWord = cursor.wordIndex + 1; if (nextWord < slots.length) { const firstLetter = slots[nextWord].slots.findIndex(s => s.status !== 'auto'); if (firstLetter >= 0) expressionCursor.value = { wordIndex: nextWord, letterIndex: firstLetter } } } else if (/^[a-zA-Z]$/.test(char)) { const cursor = expressionCursor.value; const slot = expressionLetterSlots.value.words[cursor.wordIndex]?.slots[cursor.letterIndex]; if (slot && slot.status !== 'auto') { expressionUserInput.value[slot.key] = char.toLowerCase(); const next = findNextSlot(cursor.wordIndex, cursor.letterIndex); if (next) expressionCursor.value = next } } }
   else if (val.length === 0) { const cursor = expressionCursor.value; const slot = expressionLetterSlots.value.words[cursor.wordIndex]?.slots[cursor.letterIndex]; if (slot && slot.status !== 'auto' && slot.status !== 'pending') { delete expressionUserInput.value[slot.key] } else { const prev = findPrevSlot(cursor.wordIndex, cursor.letterIndex); if (prev) { expressionCursor.value = prev; delete expressionUserInput.value[expressionLetterSlots.value.words[prev.wordIndex].slots[prev.letterIndex].key] } } }
@@ -306,7 +346,11 @@ onUnmounted(() => { window.removeEventListener('keydown', handleKeydown); clearA
       <div class="mb-4 sm:mb-6"><div class="flex justify-between text-xs font-medium mb-2" :style="{ color: 'var(--text-muted)' }"><span>📝 第 {{ choiceIndex + 1 > choiceQueue.length ? choiceQueue.length : choiceIndex + 1 }} / {{ choiceQueue.length }} 题</span><span>✅ {{ choiceStats.correct }} ❌ {{ choiceStats.wrong }}</span></div><div class="h-1 rounded-full" :style="{ backgroundColor: 'var(--bg-secondary)' }"><div class="h-full rounded-full transition-all duration-300" :style="{ width: choiceProgressPercent + '%', backgroundColor: 'var(--accent)' }"></div></div></div>
       <template v-if="!choiceFinished && currentChoice"><div class="rounded-2xl sm:rounded-3xl p-5 sm:p-8 mb-3 sm:mb-4 text-center" :style="{ backgroundColor: 'var(--bg)', boxShadow: '0 10px 25px -10px rgba(0,0,0,0.08)' }"><p class="text-xs sm:text-sm mb-1.5" :style="{ color: 'var(--text-muted)' }">以下单词的中文意思是？</p><div class="flex items-center justify-center gap-2"><p class="text-4xl sm:text-5xl font-bold word-display" :style="{ color: 'var(--text)' }">{{ currentChoice.word }}</p><button @click.stop="speak" class="text-2xl cursor-pointer transition-all hover:scale-110" :style="{ color: 'var(--accent)' }" title="发音 (S)">🔊</button></div><p class="text-base sm:text-lg mt-1.5" :style="{ color: 'var(--text-muted)' }">{{ currentChoice.phonetic }}</p></div>
         <p v-if="!isAnswered" class="text-center text-xs mb-3 text-gray-400"><span class="hidden sm:inline">键盘：<kbd>1-4</kbd> 选择 · <kbd>Enter</kbd> 确认 &nbsp;|&nbsp; </span>直接点击选项提交</p>
-        <div class="grid grid-cols-1 gap-2.5 sm:gap-3 w-full"><button v-for="(option, i) in choiceOptions" :key="i" @click="selectChoice(i)" class="w-full text-left px-4 sm:px-6 py-3.5 sm:py-4 rounded-xl sm:rounded-2xl text-base sm:text-lg font-medium transition-all cursor-pointer active:scale-[0.98]" :class="{ 'cursor-default': isAnswered }" :style="isAnswered ? (option.correct ? { backgroundColor: '#e3f3e0', color: '#2b7551', border: '2px solid #5fad56' } : (confirmedOption === i ? { backgroundColor: '#fdeaec', color: '#b13e3e', border: '2px solid #dc6b4a' } : { backgroundColor: 'var(--bg-secondary)', color: 'var(--text-muted)', opacity: '0.5' })) : (highlightedOption === i ? { backgroundColor: 'var(--bg-secondary)', color: 'var(--text)', border: '2px solid var(--accent)', boxShadow: '0 0 0 2px var(--accent)' } : { backgroundColor: 'var(--bg)', color: 'var(--text)', border: '2px solid var(--border)' })"><span class="inline-flex items-center justify-center w-6 h-6 sm:w-7 sm:h-7 rounded-full text-xs sm:text-sm text-center mr-2 sm:mr-3 font-bold" :style="isAnswered && option.correct ? { backgroundColor: '#5fad56', color: '#fff' } : (isAnswered && confirmedOption === i ? { backgroundColor: '#dc6b4a', color: '#fff' } : (highlightedOption === i ? { backgroundColor: 'var(--accent)', color: '#1A1A2E' } : { backgroundColor: 'var(--bg-secondary)', color: 'var(--text-muted)' }))">{{ i + 1 }}</span>{{ option.text }}</button></div>
+        <div v-if="choiceOptions && choiceOptions.length" class="grid grid-cols-1 gap-2.5 sm:gap-3 w-full">
+          <button v-for="(option, i) in choiceOptions" :key="i" @click="selectChoice(i)" class="w-full text-left px-4 sm:px-6 py-3.5 sm:py-4 rounded-xl sm:rounded-2xl text-base sm:text-lg font-medium transition-all cursor-pointer active:scale-[0.98]" :class="{ 'cursor-default': isAnswered }" :style="isAnswered ? (option.correct ? { backgroundColor: '#e3f3e0', color: '#2b7551', border: '2px solid #5fad56' } : (confirmedOption === i ? { backgroundColor: '#fdeaec', color: '#b13e3e', border: '2px solid #dc6b4a' } : { backgroundColor: 'var(--bg-secondary, #f3f4f6)', color: 'var(--text-muted, #9ca3af)', opacity: '0.5' })) : (highlightedOption === i ? { backgroundColor: 'var(--bg-secondary, #f3f4f6)', color: 'var(--text, #1f2937)', border: '2px solid var(--accent, #3b82f6)', boxShadow: '0 0 0 2px var(--accent, #3b82f6)' } : { backgroundColor: 'var(--bg, #ffffff)', color: 'var(--text, #1f2937)', border: '2px solid var(--border, #e5e7eb)' })">
+            <span class="inline-flex items-center justify-center w-6 h-6 sm:w-7 sm:h-7 rounded-full text-xs sm:text-sm text-center mr-2 sm:mr-3 font-bold" :style="isAnswered && option.correct ? { backgroundColor: '#5fad56', color: '#fff' } : (isAnswered && confirmedOption === i ? { backgroundColor: '#dc6b4a', color: '#fff' } : (highlightedOption === i ? { backgroundColor: 'var(--accent, #3b82f6)', color: '#1A1A2E' } : { backgroundColor: 'var(--bg-secondary, #f3f4f6)', color: 'var(--text-muted, #9ca3af)' }))">{{ i + 1 }}</span>{{ option.text }}
+          </button>
+        </div>
         <div class="flex justify-center mt-4 sm:mt-5 gap-2 sm:gap-2.5 items-center">
           <button @click="choiceSlowMode = !choiceSlowMode; selectedRate = choiceSlowMode ? 0.75 : 1.0" class="px-2 py-1.5 rounded-full text-xs font-medium cursor-pointer border transition-all hover:opacity-80" :style="choiceSlowMode ? { backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#1A1A2E' } : { backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border)', color: 'var(--text)' }">{{ choiceSlowMode ? '🐢 0.75x' : '🚶 1x' }}</button>
           <button @click="speak" class="px-3 py-1.5 rounded-full text-xs cursor-pointer" :style="{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text)' }" title="朗读 (S)">🔊</button>
