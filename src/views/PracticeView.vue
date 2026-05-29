@@ -20,11 +20,8 @@ function getModeFromQuery() {
 const queryMode = getModeFromQuery()
 if (queryMode) { mode.value = queryMode; window.history.replaceState({}, '', window.location.pathname) }
 
-// 监听路由变化切换模式
 watch(() => route.query.mode, (newMode) => {
-  if (newMode && ['flashcard', 'choice', 'spelling', 'expression'].includes(newMode)) {
-    switchMode(newMode)
-  }
+  if (newMode && ['flashcard', 'choice', 'spelling', 'expression'].includes(newMode)) switchMode(newMode)
 })
 
 const audioCtx = ref(null)
@@ -38,9 +35,7 @@ function playNavSound() { try { const ctx = getAudioCtx(); const osc = ctx.creat
 let currentVoice = null; let availableVoices = []
 const selectedGender = ref('female'); const selectedAccent = ref('us')
 const selectedRate = ref(1.0)
-const flashcardSlowMode = ref(false)
-const choiceSlowMode = ref(false)
-const spellingSlowMode = ref(false)
+const flashcardSlowMode = ref(false); const choiceSlowMode = ref(false); const spellingSlowMode = ref(false)
 let isSpeaking = false; let lastSpokenText = ''; let speechTimeout = null
 let resumeInterval = null; let activeUtterance = null
 
@@ -110,6 +105,8 @@ const currentExampleCheck = ref(null)
 watch(currentCard, (card) => { if (card?.examples?.[0]) { currentExampleCheck.value = getExampleStatus(card.examples[0].en) } else { currentExampleCheck.value = null } })
 function isOodWord(word) { const clean = word.toLowerCase().replace(/[.,!?;:'"]/g, ''); return currentExampleCheck.value?.outOfRangeWords?.includes(clean) || false }
 function splitExampleTokens(sentence) { const tokens = []; const regex = /(\S+)(\s*)/g; let match; while ((match = regex.exec(sentence)) !== null) { tokens.push({ word: match[1], space: match[2] }) } return tokens }
+function speakFlashcardWord() { if (currentCard.value) { window.speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(currentCard.value.word); u.lang = selectedAccent.value === 'uk' ? 'en-GB' : 'en-US'; u.rate = selectedRate.value; if (currentVoice) u.voice = currentVoice; window.speechSynthesis.speak(u) } }
+function speakFlashcardExample() { if (currentCard.value?.examples?.[0]) { window.speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(currentCard.value.examples[0].en); u.lang = selectedAccent.value === 'uk' ? 'en-GB' : 'en-US'; u.rate = selectedRate.value; if (currentVoice) u.voice = currentVoice; window.speechSynthesis.speak(u) } }
 
 // ===== 选择题 =====
 const choiceQueue = ref([]); const choiceIndex = ref(0); const choiceOptions = ref([])
@@ -126,15 +123,15 @@ function confirmChoice() { if (highlightedOption.value === null || isAnswered.va
 function cancelChoice() { if (isAnswered.value) return; highlightedOption.value = null }
 function restartChoice() { initChoiceMode() }
 
-// ===== 拼写（二合一输入版） =====
+// ===== 拼写（隐藏 input 移动端优化版） =====
 const spellingQueue = ref([]); const spellingIndex = ref(0)
 const isSpellingSubmitted = ref(false); const isSpellingCorrect = ref(false)
 const hidePhonetic = ref(true)
 const spellingStats = ref({ correct: 0, wrong: 0, hints: 0 }); const spellingRoundSize = 10
 const spellingHintLetters = ref([])
-const spellingSlotContainer = ref(null)
 const spellingCursor = ref(0)
 const spellingUserInput = ref({})
+const hiddenSpellingInput = ref(null)
 
 function initSpellingMode() { const pool = store.dueWords.length > 0 ? [...store.dueWords] : [...store.unmasteredWords]; const shuffled = pool.sort(() => Math.random() - 0.5); spellingQueue.value = shuffled.slice(0, spellingRoundSize); spellingIndex.value = 0; isSpellingSubmitted.value = false; isSpellingCorrect.value = false; spellingStats.value = { correct: 0, wrong: 0, hints: 0 }; spellingHintLetters.value = []; hidePhonetic.value = true; spellingSlowMode.value = false; selectedRate.value = 1.0; spellingCursor.value = 0; spellingUserInput.value = {}; nextTick(() => focusSpellingSlots()) }
 const currentSpelling = computed(() => spellingQueue.value.length === 0 ? null : spellingQueue.value[spellingIndex.value])
@@ -157,32 +154,19 @@ const spellingAllCorrect = computed(() => {
   if (!currentSpelling.value || isSpellingSubmitted.value) return false
   return spellingLetterSlots.value.every(s => s.status === 'filled')
 })
-
 watch(spellingAllCorrect, (val) => { if (val) setTimeout(() => submitSpelling(), 300) })
 
-function focusSpellingSlots() {
-  const el = spellingSlotContainer.value
-  if (!el) return
-  el.focus({ preventScroll: true })
-  el.setAttribute('contenteditable', 'true')
-  el.click()
-  setTimeout(() => el.setAttribute('contenteditable', 'false'), 100)
-}
+function focusSpellingSlots() { const input = hiddenSpellingInput.value; if (input) { input.value = ' '; input.focus() } }
 function setSpellingCursor(idx) { spellingCursor.value = idx; focusSpellingSlots() }
 
-function handleSpellingKeydown(e) {
-  if (isSpellingSubmitted.value) return
-  const key = e.key
-  if (/^[a-zA-Z]$/.test(key)) {
-    e.preventDefault()
-    spellingUserInput.value[spellingCursor.value] = key
-    if (spellingCursor.value < spellingLetterSlots.value.length - 1) spellingCursor.value++
-    return
-  }
-  if (key === 'Backspace') { e.preventDefault(); delete spellingUserInput.value[spellingCursor.value]; if (spellingCursor.value > 0) spellingCursor.value--; return }
-  if (key === 'ArrowLeft') { e.preventDefault(); if (spellingCursor.value > 0) spellingCursor.value--; return }
-  if (key === 'ArrowRight') { e.preventDefault(); if (spellingCursor.value < spellingLetterSlots.value.length - 1) spellingCursor.value++; return }
+function handleHiddenSpellingInput(e) {
+  const input = e.target; const val = input.value
+  if (val.length > 1) { const char = val.charAt(val.length - 1); if (/^[a-zA-Z]$/.test(char)) { spellingUserInput.value[spellingCursor.value] = char.toLowerCase(); if (spellingCursor.value < spellingLetterSlots.value.length - 1) spellingCursor.value++ } }
+  else if (val.length === 0) { const slot = spellingLetterSlots.value[spellingCursor.value]; if (slot && slot.status !== 'pending') { delete spellingUserInput.value[spellingCursor.value] } else if (spellingCursor.value > 0) { spellingCursor.value--; delete spellingUserInput.value[spellingCursor.value] } }
+  input.value = ' '
 }
+
+function handleSpellingKeydown(e) { if (isSpellingSubmitted.value) return; if (e.key === 'ArrowLeft') { e.preventDefault(); if (spellingCursor.value > 0) spellingCursor.value-- } else if (e.key === 'ArrowRight') { e.preventDefault(); if (spellingCursor.value < spellingLetterSlots.value.length - 1) spellingCursor.value++ } }
 
 function showSpellingHint() { if (isSpellingSubmitted.value || !currentSpelling.value) return; spellingStats.value.hints++; const word = currentSpelling.value.word; const hintedSet = new Set(spellingHintLetters.value); const unhinted = word.split('').map((_, i) => i).filter(i => !hintedSet.has(i)); if (unhinted.length === 0) { spellingHintLetters.value = []; return }; const randomIdx = unhinted[Math.floor(Math.random() * unhinted.length)]; spellingHintLetters.value = [...spellingHintLetters.value, randomIdx]; saveAllProgress() }
 function clearSpellingHints() { spellingHintLetters.value = []; saveAllProgress() }
@@ -203,9 +187,10 @@ async function toggleFavSpelling() { if (!currentSpelling.value) return; if (isF
 const expressionTasks = ref([]); const expressionIndex = ref(0)
 const expressionSubmitted = ref(false); const expressionFeedback = ref('')
 const expressionStats = ref({ completed: 0, total: 0 }); const expressionRoundSize = 5
-const expressionHintWords = ref([]); const expressionSlotContainer = ref(null)
+const expressionHintWords = ref([])
 const submittedAnswer = ref(''); const expressionCursor = ref({ wordIndex: 0, letterIndex: 0 })
 const expressionUserInput = ref({}); const expressionSlowMode = ref(false)
+const hiddenExpressionInput = ref(null)
 const expressionBank = [
   { zh: '我需要准确记录每一笔开销。', keywords: ['keep', 'account', 'money', 'spent', 'correct'], hint: 'keep a correct account of the money spent', answer: 'Keep a correct account of the money spent.' },
   { zh: '她给了我一本书作为生日礼物。', keywords: ['give', 'book', 'birthday'], hint: 'give a book for a birthday', answer: 'She gave me a book for my birthday.' },
@@ -222,42 +207,26 @@ const currentExpression = computed(() => expressionTasks.value.length === 0 ? nu
 const expressionFinished = computed(() => expressionTasks.value.length > 0 && expressionIndex.value >= expressionTasks.value.length)
 const expressionProgressPercent = computed(() => expressionTasks.value.length === 0 ? 0 : (expressionIndex.value / expressionTasks.value.length) * 100)
 function parseAnswerToWords(answer) { const rawWords = answer.split(/\s+/).filter(Boolean); return rawWords.map(w => ({ text: w, letters: w.split('') })) }
-const expressionLetterSlots = computed(() => {
+const expressionLetterSlots = computed(() => { /* 同前 */ 
   if (!currentExpression.value) return { words: [], totalLetters: 0 }
-  const words = parseAnswerToWords(currentExpression.value.answer); const hintedSet = new Set(expressionHintWords.value)
-  let totalLetters = 0
-  const result = words.map((word, wi) => {
-    const slots = word.letters.map((char, si) => {
-      const key = `${wi}-${si}`; const isLetter = /[a-zA-Z]/.test(char)
-      if (!isLetter) return { char, display: char, status: 'auto', key }
-      totalLetters++; const userChar = expressionUserInput.value[key]
-      if (userChar !== undefined) return { char, display: userChar, status: userChar.toLowerCase() === char.toLowerCase() ? 'filled' : 'wrong', key }
-      if (hintedSet.has(wi)) return { char, display: '_', status: 'hinted', key }
-      return { char, display: '_', status: 'pending', key }
-    }); return { text: word.text, slots }
-  }); return { words: result, totalLetters }
+  const words = parseAnswerToWords(currentExpression.value.answer); const hintedSet = new Set(expressionHintWords.value); let totalLetters = 0
+  const result = words.map((word, wi) => { const slots = word.letters.map((char, si) => { const key = `${wi}-${si}`; const isLetter = /[a-zA-Z]/.test(char); if (!isLetter) return { char, display: char, status: 'auto', key }; totalLetters++; const userChar = expressionUserInput.value[key]; if (userChar !== undefined) return { char, display: userChar, status: userChar.toLowerCase() === char.toLowerCase() ? 'filled' : 'wrong', key }; if (hintedSet.has(wi)) return { char, display: '_', status: 'hinted', key }; return { char, display: '_', status: 'pending', key } }); return { text: word.text, slots } }); return { words: result, totalLetters }
 })
-const expressionAllCorrect = computed(() => {
-  if (!currentExpression.value || expressionSubmitted.value) return false
-  const slots = expressionLetterSlots.value.words; let allFilled = true
-  for (const word of slots) { for (const slot of word.slots) { if (slot.status === 'pending' || slot.status === 'wrong' || slot.status === 'hinted') { allFilled = false; break } } if (!allFilled) break }
-  return allFilled && slots.length > 0
-})
+const expressionAllCorrect = computed(() => { if (!currentExpression.value || expressionSubmitted.value) return false; const slots = expressionLetterSlots.value.words; let allFilled = true; for (const word of slots) { for (const slot of word.slots) { if (slot.status === 'pending' || slot.status === 'wrong' || slot.status === 'hinted') { allFilled = false; break } } if (!allFilled) break }; return allFilled && slots.length > 0 })
 watch(expressionAllCorrect, (val) => { if (val) setTimeout(() => submitExpression(), 400) })
 const hintedWordObjects = computed(() => { if (!currentExpression.value) return []; const words = parseAnswerToWords(currentExpression.value.answer); return expressionHintWords.value.map(i => words[i]).filter(Boolean) })
 function getSlotDisplay(slot) { return slot.display }
-function focusExpressionSlots() {
-  const el = expressionSlotContainer.value
-  if (!el) return
-  el.focus({ preventScroll: true })
-  el.setAttribute('contenteditable', 'true')
-  el.click()
-  setTimeout(() => el.setAttribute('contenteditable', 'false'), 100)
-}
+function focusExpressionSlots() { const input = hiddenExpressionInput.value; if (input) { input.value = ' '; input.focus() } }
 function setExpressionCursor(wi, si) { expressionCursor.value = { wordIndex: wi, letterIndex: si }; focusExpressionSlots() }
+function handleHiddenExpressionInput(e) { /* 同前 */ 
+  if (expressionSubmitted.value) return; const input = e.target; const val = input.value
+  if (val.length > 1) { const char = val.charAt(val.length - 1); if (char === ' ') { const cursor = expressionCursor.value; const slots = expressionLetterSlots.value.words; const nextWord = cursor.wordIndex + 1; if (nextWord < slots.length) { const firstLetter = slots[nextWord].slots.findIndex(s => s.status !== 'auto'); if (firstLetter >= 0) expressionCursor.value = { wordIndex: nextWord, letterIndex: firstLetter } } } else if (/^[a-zA-Z]$/.test(char)) { const cursor = expressionCursor.value; const slot = expressionLetterSlots.value.words[cursor.wordIndex]?.slots[cursor.letterIndex]; if (slot && slot.status !== 'auto') { expressionUserInput.value[slot.key] = char.toLowerCase(); const next = findNextSlot(cursor.wordIndex, cursor.letterIndex); if (next) expressionCursor.value = next } } }
+  else if (val.length === 0) { const cursor = expressionCursor.value; const slot = expressionLetterSlots.value.words[cursor.wordIndex]?.slots[cursor.letterIndex]; if (slot && slot.status !== 'auto' && slot.status !== 'pending') { delete expressionUserInput.value[slot.key] } else { const prev = findPrevSlot(cursor.wordIndex, cursor.letterIndex); if (prev) { expressionCursor.value = prev; delete expressionUserInput.value[expressionLetterSlots.value.words[prev.wordIndex].slots[prev.letterIndex].key] } } }
+  input.value = ' '
+}
 function findNextSlot(wi, si) { const slots = expressionLetterSlots.value.words; for (let j = si + 1; j < slots[wi].slots.length; j++) { if (slots[wi].slots[j].status !== 'auto') return { wordIndex: wi, letterIndex: j } } for (let i = wi + 1; i < slots.length; i++) { for (let j = 0; j < slots[i].slots.length; j++) { if (slots[i].slots[j].status !== 'auto') return { wordIndex: i, letterIndex: j } } } return null }
 function findPrevSlot(wi, si) { const slots = expressionLetterSlots.value.words; for (let j = si - 1; j >= 0; j--) { if (slots[wi].slots[j].status !== 'auto') return { wordIndex: wi, letterIndex: j } } for (let i = wi - 1; i >= 0; i--) { for (let j = slots[i].slots.length - 1; j >= 0; j--) { if (slots[i].slots[j].status !== 'auto') return { wordIndex: i, letterIndex: j } } } return null }
-function handleExpressionKeydown(e) { if (expressionSubmitted.value) return; const key = e.key; const cursor = expressionCursor.value; if (/^[a-zA-Z]$/.test(key)) { e.preventDefault(); const slot = expressionLetterSlots.value.words[cursor.wordIndex]?.slots[cursor.letterIndex]; if (!slot || slot.status === 'auto') return; expressionUserInput.value[slot.key] = key; const next = findNextSlot(cursor.wordIndex, cursor.letterIndex); if (next) expressionCursor.value = next; return } if (key === ' ') { e.preventDefault(); const slots = expressionLetterSlots.value.words; const nextWord = cursor.wordIndex + 1; if (nextWord < slots.length) { const firstLetter = slots[nextWord].slots.findIndex(s => s.status !== 'auto'); if (firstLetter >= 0) expressionCursor.value = { wordIndex: nextWord, letterIndex: firstLetter } } return } if (key === 'Backspace') { e.preventDefault(); const slot = expressionLetterSlots.value.words[cursor.wordIndex]?.slots[cursor.letterIndex]; if (slot && slot.status !== 'auto') delete expressionUserInput.value[slot.key]; const prev = findPrevSlot(cursor.wordIndex, cursor.letterIndex); if (prev) expressionCursor.value = prev; return } }
+function handleExpressionKeydown(e) { if (expressionSubmitted.value) return; if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); const cursor = expressionCursor.value; if (e.key === 'ArrowLeft') { const prev = findPrevSlot(cursor.wordIndex, cursor.letterIndex); if (prev) expressionCursor.value = prev } else { const next = findNextSlot(cursor.wordIndex, cursor.letterIndex); if (next) expressionCursor.value = next } } }
 function initExpressionMode() { const shuffled = [...expressionBank].sort(() => Math.random() - 0.5); expressionTasks.value = shuffled.slice(0, expressionRoundSize); expressionIndex.value = 0; expressionUserInput.value = {}; expressionSubmitted.value = false; expressionFeedback.value = ''; expressionStats.value = { completed: 0, total: expressionRoundSize }; expressionHintWords.value = []; expressionCursor.value = { wordIndex: 0, letterIndex: 0 }; expressionSlowMode.value = false; selectedRate.value = 1.0; nextTick(() => focusExpressionSlots()) }
 function toggleExpressionRate() { expressionSlowMode.value = !expressionSlowMode.value; selectedRate.value = expressionSlowMode.value ? 0.75 : 1.0 }
 function showExpressionHint() { if (expressionSubmitted.value || !currentExpression.value) return; const words = parseAnswerToWords(currentExpression.value.answer); const hintedSet = new Set(expressionHintWords.value); const unhintedIndices = words.map((_, i) => i).filter(i => !hintedSet.has(i)); if (unhintedIndices.length === 0) return; const randomIdx = unhintedIndices[Math.floor(Math.random() * unhintedIndices.length)]; expressionHintWords.value = [...expressionHintWords.value, randomIdx] }
@@ -269,7 +238,7 @@ function saveAllProgress() { localStorage.setItem('ogden850-practice-queue', JSO
 function loadAllProgress() { try { const sq = localStorage.getItem('ogden850-practice-queue'); if (sq) queue.value = JSON.parse(sq); const si = localStorage.getItem('ogden850-practice-idx'); if (si) currentIndex.value = parseInt(si); const ss = localStorage.getItem('ogden850-practice-stats'); if (ss) stats.value = JSON.parse(ss); const cq = localStorage.getItem('ogden850-choice-queue'); if (cq) choiceQueue.value = JSON.parse(cq); const ci = localStorage.getItem('ogden850-choice-idx'); if (ci) choiceIndex.value = parseInt(ci); const cs = localStorage.getItem('ogden850-choice-stats'); if (cs) choiceStats.value = JSON.parse(cs); if (choiceQueue.value.length > 0 && choiceIndex.value < choiceQueue.value.length) choiceOptions.value = generateOptions(choiceQueue.value[choiceIndex.value]); const pq = localStorage.getItem('ogden850-spelling-queue'); if (pq) spellingQueue.value = JSON.parse(pq); const pi = localStorage.getItem('ogden850-spelling-idx'); if (pi) spellingIndex.value = parseInt(pi); const ps = localStorage.getItem('ogden850-spelling-stats'); if (ps) spellingStats.value = JSON.parse(ps); const sh = localStorage.getItem('ogden850-spelling-hints'); if (sh) spellingHintLetters.value = JSON.parse(sh); if (currentIndex.value >= queue.value.length) currentIndex.value = 0; if (choiceIndex.value >= choiceQueue.value.length) choiceIndex.value = 0; if (spellingIndex.value >= spellingQueue.value.length) spellingIndex.value = 0 } catch { /* */ } }
 
 function handleKeydown(e) {
-  if ((e.key === 's' || e.key === 'S') && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA' && document.activeElement !== spellingSlotContainer.value && document.activeElement !== expressionSlotContainer.value) { e.preventDefault(); speak(); return }
+  if ((e.key === 's' || e.key === 'S') && document.activeElement?.tagName !== 'INPUT' && document.activeElement !== hiddenSpellingInput.value && document.activeElement !== hiddenExpressionInput.value) { e.preventDefault(); speak(); return }
   if (mode.value === 'expression') { if (expressionFinished.value) { if (e.key === 'r' || e.key === 'R') restartExpression(); return }; return }
   if (mode.value === 'spelling') { if (spellingFinished.value) { if (e.key === 'r' || e.key === 'R') restartSpelling(); return }; if (!isSpellingSubmitted.value) { if (e.key === 'Tab') { e.preventDefault(); showSpellingHint() } }; return }
   if (mode.value === 'flashcard') { if (flashcardFinished.value) { if (e.key === 'r' || e.key === 'R') restartFlashcard(); return }; if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); toggleFlip(); return }; if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') { e.preventDefault(); prevCard(); playNavSound(); return }; if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') { e.preventDefault(); nextCard(); playNavSound(); return }; if (e.key === 'f' || e.key === 'F') { e.preventDefault(); toggleFavFlashcard(); return }; if (isFlipped.value) { if (e.key === '1') { e.preventDefault(); applyGrade('again'); return }; if (e.key === '2') { e.preventDefault(); applyGrade('hard'); return }; if (e.key === '3') { e.preventDefault(); applyGrade('good'); return }; if (e.key === '4') { e.preventDefault(); applyGrade('easy'); return } }; return }
@@ -296,8 +265,20 @@ onUnmounted(() => { window.removeEventListener('keydown', handleKeydown); clearA
       <template v-if="!flashcardFinished && currentCard">
         <div class="mb-4 sm:mb-6 cursor-pointer" style="perspective: 1400px;" @click="toggleFlip"><div class="relative w-full transition-transform duration-500" style="transform-style: preserve-3d; min-height: 450px;" :style="{ transform: isFlipped ? 'rotateY(180deg)' : '' }">
           <div class="absolute inset-0 rounded-3xl p-6 sm:p-8 flex flex-col justify-between" style="backface-visibility: hidden;" :style="{ backgroundColor: 'var(--bg)', boxShadow: '0 10px 25px -10px rgba(0,0,0,0.08), 0 0 0 1px var(--border)' }">
-            <div class="flex-1 flex flex-col justify-center items-center"><p class="text-5xl sm:text-6xl font-bold mb-2 word-display" :style="{ color: 'var(--text)' }">{{ currentCard.word }}</p><span class="text-xs sm:text-sm px-3 sm:px-4 py-1 rounded-full mt-2" :style="{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text-muted)' }">{{ currentCard.phonetic }}</span><div class="mt-4 sm:mt-6 rounded-2xl flex items-center justify-center overflow-hidden w-full" :style="{ backgroundColor: 'var(--bg-secondary)', minHeight: '200px' }"><img v-if="currentImageUrl" :src="currentImageUrl" class="w-full max-h-48 object-cover" alt="illustration" /><div v-else class="text-xs sm:text-sm py-8 flex flex-col items-center justify-center" :style="{ color: 'var(--text-muted)' }"><span v-if="imageLoading && !isOffline" class="animate-pulse">🎨 加载中...</span><span v-else>🖼️ 暂无图片</span></div></div></div><p class="text-xs text-center mt-3" :style="{ color: 'var(--text-muted)' }">⤴️ 点击/空格翻面</p></div>
-          <div class="absolute inset-0 rounded-3xl p-5 sm:p-8 flex flex-col justify-between overflow-y-auto" style="backface-visibility: hidden; transform: rotateY(180deg);" :style="{ backgroundColor: 'var(--bg)', boxShadow: '0 10px 25px -10px rgba(0,0,0,0.08), 0 0 0 1px var(--border)' }"><div class="flex-1"><div class="mb-3 sm:mb-4 pb-2 sm:pb-3 border-b" :style="{ borderColor: 'var(--border)' }"><p class="text-[10px] sm:text-xs uppercase font-semibold" :style="{ color: 'var(--accent)' }">📖 单词</p><p class="text-lg sm:text-xl font-bold mt-1" :style="{ color: 'var(--text)' }">{{ currentCard.word }}</p></div><div class="mb-3 sm:mb-4 pb-2 sm:pb-3 border-b" :style="{ borderColor: 'var(--border)' }"><p class="text-[10px] sm:text-xs uppercase font-semibold" :style="{ color: 'var(--accent)' }">🔤 释义</p><p class="text-base sm:text-lg mt-1" :style="{ color: 'var(--text)' }">{{ currentCard.chinese }}</p></div><div class="mb-3 sm:mb-4 pb-2 sm:pb-3 border-b" :style="{ borderColor: 'var(--border)' }"><p class="text-[10px] sm:text-xs uppercase font-semibold" :style="{ color: 'var(--accent)' }">🗣️ 音标</p><p class="text-base sm:text-lg mt-1" :style="{ color: 'var(--text-muted)' }">{{ currentCard.phonetic }}</p></div><div v-if="currentCard.examples?.[0]" class="mb-3 sm:mb-4"><p class="text-[10px] sm:text-xs uppercase font-semibold" :style="{ color: 'var(--accent)' }">📝 例句</p><div class="mt-2 p-2.5 sm:p-3 rounded-2xl" :style="{ backgroundColor: 'var(--bg-secondary)' }"><p class="text-sm sm:text-base leading-relaxed mb-1" :style="{ color: 'var(--text)' }"><template v-for="(token, ti) in splitExampleTokens(currentCard.examples[0].en)" :key="ti"><span :class="isOodWord(token.word) ? 'border-b-2 border-dotted border-red-400 text-red-600 cursor-help' : ''" :title="isOodWord(token.word) ? '⚠️ 超纲词' : ''">{{ token.word }}</span>{{ token.space }}</template></p><p class="text-xs sm:text-sm" :style="{ color: 'var(--accent)' }">{{ currentCard.examples[0].zh }}</p></div></div></div>
+            <div class="flex-1 flex flex-col justify-center items-center">
+              <div class="flex items-center justify-center gap-2">
+                <p class="text-5xl sm:text-6xl font-bold word-display" :style="{ color: 'var(--text)' }">{{ currentCard.word }}</p>
+                <button @click.stop="speakFlashcardWord" class="text-2xl sm:text-3xl cursor-pointer transition-all hover:scale-110" :style="{ color: 'var(--accent)' }" title="单词发音">🔊</button>
+              </div>
+              <span class="text-xs sm:text-sm px-3 sm:px-4 py-1 rounded-full mt-2" :style="{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text-muted)' }">{{ currentCard.phonetic }}</span><div class="mt-4 sm:mt-6 rounded-2xl flex items-center justify-center overflow-hidden w-full" :style="{ backgroundColor: 'var(--bg-secondary)', minHeight: '200px' }"><img v-if="currentImageUrl" :src="currentImageUrl" class="w-full max-h-48 object-cover" alt="illustration" /><div v-else class="text-xs sm:text-sm py-8 flex flex-col items-center justify-center" :style="{ color: 'var(--text-muted)' }"><span v-if="imageLoading && !isOffline" class="animate-pulse">🎨 加载中...</span><span v-else>🖼️ 暂无图片</span></div></div></div><p class="text-xs text-center mt-3" :style="{ color: 'var(--text-muted)' }">⤴️ 点击/空格翻面</p></div>
+          <div class="absolute inset-0 rounded-3xl p-5 sm:p-8 flex flex-col justify-between overflow-y-auto" style="backface-visibility: hidden; transform: rotateY(180deg);" :style="{ backgroundColor: 'var(--bg)', boxShadow: '0 10px 25px -10px rgba(0,0,0,0.08), 0 0 0 1px var(--border)' }"><div class="flex-1">
+            <div class="mb-3 sm:mb-4 pb-2 sm:pb-3 border-b flex items-center justify-between" :style="{ borderColor: 'var(--border)' }">
+              <div><p class="text-[10px] sm:text-xs uppercase font-semibold" :style="{ color: 'var(--accent)' }">📖 单词</p><p class="text-lg sm:text-xl font-bold mt-1" :style="{ color: 'var(--text)' }">{{ currentCard.word }}<span class="mx-3 sm:mx-4 opacity-30" :style="{ color: 'var(--text-muted)' }">|</span><span class="text-base sm:text-lg font-medium" :style="{ color: 'var(--accent)' }">{{ currentCard.chinese }}</span></p></div>
+              <button @click.stop="speakFlashcardWord" class="text-xl cursor-pointer transition-all hover:scale-110 flex-shrink-0 ml-2" :style="{ color: 'var(--accent)' }" title="单词发音">🔊</button>
+            </div>
+            <div class="mb-3 sm:mb-4 pb-2 sm:pb-3 border-b" :style="{ borderColor: 'var(--border)' }"><p class="text-[10px] sm:text-xs uppercase font-semibold" :style="{ color: 'var(--accent)' }">🗣️ 音标</p><p class="text-base sm:text-lg mt-1" :style="{ color: 'var(--text-muted)' }">{{ currentCard.phonetic }}</p></div>
+            <div v-if="currentCard.examples?.[0]" class="mb-3 sm:mb-4"><p class="text-[10px] sm:text-xs uppercase font-semibold" :style="{ color: 'var(--accent)' }">📝 例句</p><div class="mt-2 p-2.5 sm:p-3 rounded-2xl" :style="{ backgroundColor: 'var(--bg-secondary)' }"><div class="flex items-start justify-between gap-2"><p class="text-sm sm:text-base leading-relaxed mb-1" :style="{ color: 'var(--text)' }"><template v-for="(token, ti) in splitExampleTokens(currentCard.examples[0].en)" :key="ti"><span :class="isOodWord(token.word) ? 'border-b-2 border-dotted border-red-400 text-red-600 cursor-help' : ''" :title="isOodWord(token.word) ? '⚠️ 超纲词' : ''">{{ token.word }}</span>{{ token.space }}</template></p><button @click.stop="speakFlashcardExample" class="text-lg cursor-pointer transition-all hover:scale-110 flex-shrink-0 mt-0.5" :style="{ color: 'var(--accent)' }" title="例句发音">🔊</button></div><p class="text-xs sm:text-sm" :style="{ color: 'var(--accent)' }">{{ currentCard.examples[0].zh }}</p></div></div>
+          </div>
             <div class="flex gap-2 sm:gap-3 mt-3 sm:mt-4">
               <button @click.stop="applyGrade('again')" class="flex-1 py-2 sm:py-2.5 rounded-full text-xs sm:text-sm font-bold cursor-pointer active:scale-95" :style="{ backgroundColor: '#fdeaec', color: '#b13e3e' }" title="完全忘记（1）">🔄 Again</button>
               <button @click.stop="applyGrade('hard')" class="flex-1 py-2 sm:py-2.5 rounded-full text-xs sm:text-sm font-bold cursor-pointer active:scale-95" :style="{ backgroundColor: '#fff0e0', color: '#c96f0e' }" title="想起困难（2）">⚠️ Hard</button>
@@ -323,10 +304,10 @@ onUnmounted(() => { window.removeEventListener('keydown', handleKeydown); clearA
     <!-- ==================== 选择 ==================== -->
     <template v-if="mode === 'choice'">
       <div class="mb-4 sm:mb-6"><div class="flex justify-between text-xs font-medium mb-2" :style="{ color: 'var(--text-muted)' }"><span>📝 第 {{ choiceIndex + 1 > choiceQueue.length ? choiceQueue.length : choiceIndex + 1 }} / {{ choiceQueue.length }} 题</span><span>✅ {{ choiceStats.correct }} ❌ {{ choiceStats.wrong }}</span></div><div class="h-1 rounded-full" :style="{ backgroundColor: 'var(--bg-secondary)' }"><div class="h-full rounded-full transition-all duration-300" :style="{ width: choiceProgressPercent + '%', backgroundColor: 'var(--accent)' }"></div></div></div>
-      <template v-if="!choiceFinished && currentChoice"><div class="rounded-2xl sm:rounded-3xl p-5 sm:p-8 mb-3 sm:mb-4 text-center" :style="{ backgroundColor: 'var(--bg)', boxShadow: '0 10px 25px -10px rgba(0,0,0,0.08)' }"><p class="text-xs sm:text-sm mb-1.5" :style="{ color: 'var(--text-muted)' }">以下单词的中文意思是？</p><p class="text-4xl sm:text-5xl font-bold word-display" :style="{ color: 'var(--text)' }">{{ currentChoice.word }}</p><p class="text-base sm:text-lg mt-1.5" :style="{ color: 'var(--text-muted)' }">{{ currentChoice.phonetic }}</p></div>
-        <p v-if="!isAnswered" class="text-center text-xs mb-2" :style="{ color: 'var(--text-muted)' }">键盘：<kbd>1-4</kbd> 选择 · <kbd>Enter</kbd> 确认 · <kbd>Esc</kbd> 取消 &nbsp;|&nbsp; 鼠标：直接点击提交</p>
-        <div class="grid grid-cols-1 gap-2 sm:gap-2.5" style="max-height: 55vh; overflow-y: auto;"><button v-for="(option, i) in choiceOptions" :key="i" @click="selectChoice(i)" class="w-full text-left px-4 sm:px-6 py-3 sm:py-3.5 rounded-xl sm:rounded-2xl text-base sm:text-lg font-medium transition-all cursor-pointer" :class="{ 'cursor-default': isAnswered }" :style="isAnswered ? (option.correct ? { backgroundColor: '#e3f3e0', color: '#2b7551', border: '2px solid #5fad56' } : (confirmedOption === i ? { backgroundColor: '#fdeaec', color: '#b13e3e', border: '2px solid #dc6b4a' } : { backgroundColor: 'var(--bg-secondary)', color: 'var(--text-muted)', opacity: '0.5' })) : (highlightedOption === i ? { backgroundColor: 'var(--bg-secondary)', color: 'var(--text)', border: '2px solid var(--accent)', boxShadow: '0 0 0 2px var(--accent)' } : { backgroundColor: 'var(--bg)', color: 'var(--text)', border: '2px solid var(--border)' })"><span class="inline-block w-6 h-6 sm:w-7 sm:h-7 rounded-full text-xs sm:text-sm text-center leading-6 sm:leading-7 mr-2 sm:mr-3 font-bold" :style="isAnswered && option.correct ? { backgroundColor: '#5fad56', color: '#fff' } : (isAnswered && confirmedOption === i ? { backgroundColor: '#dc6b4a', color: '#fff' } : (highlightedOption === i ? { backgroundColor: 'var(--accent)', color: '#1A1A2E' } : { backgroundColor: 'var(--bg-secondary)', color: 'var(--text-muted)' }))">{{ i + 1 }}</span>{{ option.text }}</button></div>
-        <div class="flex justify-center mt-3 sm:mt-4 gap-2 sm:gap-2.5 items-center">
+      <template v-if="!choiceFinished && currentChoice"><div class="rounded-2xl sm:rounded-3xl p-5 sm:p-8 mb-3 sm:mb-4 text-center" :style="{ backgroundColor: 'var(--bg)', boxShadow: '0 10px 25px -10px rgba(0,0,0,0.08)' }"><p class="text-xs sm:text-sm mb-1.5" :style="{ color: 'var(--text-muted)' }">以下单词的中文意思是？</p><div class="flex items-center justify-center gap-2"><p class="text-4xl sm:text-5xl font-bold word-display" :style="{ color: 'var(--text)' }">{{ currentChoice.word }}</p><button @click.stop="speak" class="text-2xl cursor-pointer transition-all hover:scale-110" :style="{ color: 'var(--accent)' }" title="发音 (S)">🔊</button></div><p class="text-base sm:text-lg mt-1.5" :style="{ color: 'var(--text-muted)' }">{{ currentChoice.phonetic }}</p></div>
+        <p v-if="!isAnswered" class="text-center text-xs mb-3 text-gray-400"><span class="hidden sm:inline">键盘：<kbd>1-4</kbd> 选择 · <kbd>Enter</kbd> 确认 &nbsp;|&nbsp; </span>直接点击选项提交</p>
+        <div class="grid grid-cols-1 gap-2.5 sm:gap-3 w-full"><button v-for="(option, i) in choiceOptions" :key="i" @click="selectChoice(i)" class="w-full text-left px-4 sm:px-6 py-3.5 sm:py-4 rounded-xl sm:rounded-2xl text-base sm:text-lg font-medium transition-all cursor-pointer active:scale-[0.98]" :class="{ 'cursor-default': isAnswered }" :style="isAnswered ? (option.correct ? { backgroundColor: '#e3f3e0', color: '#2b7551', border: '2px solid #5fad56' } : (confirmedOption === i ? { backgroundColor: '#fdeaec', color: '#b13e3e', border: '2px solid #dc6b4a' } : { backgroundColor: 'var(--bg-secondary)', color: 'var(--text-muted)', opacity: '0.5' })) : (highlightedOption === i ? { backgroundColor: 'var(--bg-secondary)', color: 'var(--text)', border: '2px solid var(--accent)', boxShadow: '0 0 0 2px var(--accent)' } : { backgroundColor: 'var(--bg)', color: 'var(--text)', border: '2px solid var(--border)' })"><span class="inline-flex items-center justify-center w-6 h-6 sm:w-7 sm:h-7 rounded-full text-xs sm:text-sm text-center mr-2 sm:mr-3 font-bold" :style="isAnswered && option.correct ? { backgroundColor: '#5fad56', color: '#fff' } : (isAnswered && confirmedOption === i ? { backgroundColor: '#dc6b4a', color: '#fff' } : (highlightedOption === i ? { backgroundColor: 'var(--accent)', color: '#1A1A2E' } : { backgroundColor: 'var(--bg-secondary)', color: 'var(--text-muted)' }))">{{ i + 1 }}</span>{{ option.text }}</button></div>
+        <div class="flex justify-center mt-4 sm:mt-5 gap-2 sm:gap-2.5 items-center">
           <button @click="choiceSlowMode = !choiceSlowMode; selectedRate = choiceSlowMode ? 0.75 : 1.0" class="px-2 py-1.5 rounded-full text-xs font-medium cursor-pointer border transition-all hover:opacity-80" :style="choiceSlowMode ? { backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#1A1A2E' } : { backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border)', color: 'var(--text)' }">{{ choiceSlowMode ? '🐢 0.75x' : '🚶 1x' }}</button>
           <button @click="speak" class="px-3 py-1.5 rounded-full text-xs cursor-pointer" :style="{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text)' }" title="朗读 (S)">🔊</button>
           <button @click.stop="toggleFavChoice" class="px-3 py-1.5 rounded-full text-xs cursor-pointer" :style="{ backgroundColor: 'var(--bg-secondary)', color: isFavChoice ? '#f59e0b' : 'var(--text)' }" :title="isFavChoice ? '取消收藏' : '添加收藏'">{{ isFavChoice ? '⭐' : '☆' }}</button>
@@ -335,20 +316,17 @@ onUnmounted(() => { window.removeEventListener('keydown', handleKeydown); clearA
       <template v-if="choiceFinished"><div class="text-center py-16 sm:py-20"><p class="text-4xl sm:text-5xl mb-4">🎉</p><p class="text-2xl sm:text-3xl font-bold mb-4" :style="{ color: 'var(--text)' }">答题结束</p><p class="text-lg sm:text-xl mb-2" :style="{ color: 'var(--success)' }">✅ {{ choiceStats.correct }} 题</p><p class="text-lg sm:text-xl mb-6 sm:mb-8" :style="{ color: 'var(--danger)' }">❌ {{ choiceStats.wrong }} 题</p><button @click="restartChoice" class="px-6 sm:px-8 py-2.5 sm:py-3 text-base sm:text-lg rounded-2xl font-semibold" :style="{ backgroundColor: 'var(--accent)', color: '#1A1A2E' }">再来一轮 · R</button></div></template>
     </template>
 
-    <!-- ==================== 拼写（二合一输入版） ==================== -->
+    <!-- ==================== 拼写 ==================== -->
     <template v-if="mode === 'spelling'">
       <div class="mb-4 sm:mb-6"><div class="flex justify-between text-xs font-medium mb-2" :style="{ color: 'var(--text-muted)' }"><span>⌨️ 第 {{ spellingIndex + 1 > spellingQueue.length ? spellingQueue.length : spellingIndex + 1 }} / {{ spellingQueue.length }} 题</span><span>✅ {{ spellingStats.correct }} ❌ {{ spellingStats.wrong }} 💡 {{ spellingStats.hints }}</span></div><div class="h-1 rounded-full" :style="{ backgroundColor: 'var(--bg-secondary)' }"><div class="h-full rounded-full transition-all duration-300" :style="{ width: spellingProgressPercent + '%', backgroundColor: 'var(--accent)' }"></div></div></div>
       <template v-if="!spellingFinished && currentSpelling">
-        <div class="rounded-2xl sm:rounded-3xl p-5 sm:p-8 mb-3 sm:mb-4 text-center" :style="{ backgroundColor: 'var(--bg)', boxShadow: '0 10px 25px -10px rgba(0,0,0,0.08)' }"><p class="text-xs sm:text-sm mb-1.5" :style="{ color: 'var(--text-muted)' }">请拼写以下中文对应的英文单词</p><p class="text-3xl sm:text-4xl font-bold mb-1.5 word-display" :style="{ color: 'var(--text)' }">{{ currentSpelling.chinese }}</p><p v-if="!hidePhonetic" class="text-base sm:text-lg" :style="{ color: 'var(--text-muted)' }">{{ currentSpelling.phonetic }}</p><button v-if="hidePhonetic && !isSpellingSubmitted" @click="hidePhonetic = false" class="text-xs underline cursor-pointer" :style="{ color: 'var(--text-muted)' }">👁️ 显示音标</button></div>
-        <div v-if="!isSpellingSubmitted" class="mb-3">
-          <div ref="spellingSlotContainer" tabindex="0" class="flex justify-center gap-1.5 sm:gap-2 outline-none p-3 rounded-xl" :style="{ backgroundColor: 'var(--bg-secondary)' }" @keydown="handleSpellingKeydown" @click="focusSpellingSlots">
-            <span v-for="(slot, si) in spellingLetterSlots" :key="si"
-              class="inline-flex items-center justify-center w-9 h-11 sm:w-10 sm:h-12 rounded-lg text-xl sm:text-2xl font-bold font-mono transition-all select-none"
-              :class="{ 'ring-2 ring-[var(--accent)]': !isSpellingSubmitted && spellingCursor === si, 'cursor-pointer': !isSpellingSubmitted }"
-              :style="slot.status === 'filled' ? { backgroundColor: '#e3f3e0', color: '#2b7551', border: '2px solid #5fad56' } : slot.status === 'wrong' ? { backgroundColor: '#fdeaec', color: '#b13e3e', border: '2px solid #dc6b4a' } : slot.status === 'hinted' ? { backgroundColor: '#fff8e0', color: '#c96f0e', border: '2px dashed #c96f0e' } : { backgroundColor: 'var(--bg)', color: 'var(--text-muted)', border: '2px dashed var(--border)' }"
-              @click.stop="setSpellingCursor(si)">{{ slot.display }}</span>
+        <div class="rounded-2xl sm:rounded-3xl p-5 sm:p-8 mb-3 sm:mb-4 text-center" :style="{ backgroundColor: 'var(--bg)', boxShadow: '0 10px 25px -10px rgba(0,0,0,0.08)' }"><p class="text-xs sm:text-sm mb-1.5" :style="{ color: 'var(--text-muted)' }">请拼写以下中文对应的英文单词</p><div class="flex items-center justify-center gap-2 mb-1.5"><p class="text-3xl sm:text-4xl font-bold word-display" :style="{ color: 'var(--text)' }">{{ currentSpelling.chinese }}</p><button @click.stop="speak" class="text-2xl cursor-pointer transition-all hover:scale-110" :style="{ color: 'var(--accent)' }" title="发音 (S)">🔊</button></div><p v-if="!hidePhonetic" class="text-base sm:text-lg" :style="{ color: 'var(--text-muted)' }">{{ currentSpelling.phonetic }}</p><button v-if="hidePhonetic && !isSpellingSubmitted" @click="hidePhonetic = false" class="text-xs underline cursor-pointer" :style="{ color: 'var(--text-muted)' }">👁️ 显示音标</button></div>
+        <div v-if="!isSpellingSubmitted" class="mb-3 relative">
+          <input ref="hiddenSpellingInput" type="text" class="absolute" style="opacity: 0; width: 1px; height: 1px; top: 50%; left: 50%; z-index: -1; pointer-events: none;" autocorrect="off" autocapitalize="none" autocomplete="off" spellcheck="false" @input="handleHiddenSpellingInput" @keydown="handleSpellingKeydown" />
+          <div class="flex justify-center gap-1.5 sm:gap-2 outline-none p-3 rounded-xl cursor-pointer" :style="{ backgroundColor: 'var(--bg-secondary)' }" @click="focusSpellingSlots">
+            <span v-for="(slot, si) in spellingLetterSlots" :key="si" class="inline-flex items-center justify-center w-9 h-11 sm:w-10 sm:h-12 rounded-lg text-xl sm:text-2xl font-bold font-mono transition-all select-none" :class="{ 'ring-2 ring-[var(--accent)]': !isSpellingSubmitted && spellingCursor === si }" :style="slot.status === 'filled' ? { backgroundColor: '#e3f3e0', color: '#2b7551', border: '2px solid #5fad56' } : slot.status === 'wrong' ? { backgroundColor: '#fdeaec', color: '#b13e3e', border: '2px solid #dc6b4a' } : slot.status === 'hinted' ? { backgroundColor: '#fff8e0', color: '#c96f0e', border: '2px dashed #c96f0e' } : { backgroundColor: 'var(--bg)', color: 'var(--text-muted)', border: '2px dashed var(--border)' }" @click.stop="setSpellingCursor(si)">{{ slot.display }}</span>
           </div>
-          <p class="text-center text-[10px] mt-1.5 opacity-50" :style="{ color: 'var(--text-muted)' }">点击字母块开始输入 · 退格删除 · 全部正确自动提交</p>
+          <p class="text-center text-[10px] mt-1.5 opacity-50" :style="{ color: 'var(--text-muted)' }">点击上方区域开始输入 · 支持手机键盘 · 全部正确自动提交</p>
         </div>
         <div v-if="isSpellingSubmitted" class="text-center py-4"><p v-if="isSpellingCorrect" class="text-xl sm:text-2xl font-bold" :style="{ color: 'var(--success)' }">✅ 正确！</p><div v-else><p class="text-xl sm:text-2xl font-bold mb-2" :style="{ color: 'var(--danger)' }">❌ 错误</p><p class="text-base sm:text-lg">正确答案：<span :style="{ color: 'var(--success)' }">{{ currentSpelling.word }}</span></p></div></div>
         <p class="text-center text-xs mt-2 mb-2 opacity-60" :style="{ color: 'var(--text)' }"><kbd>Tab</kbd> 提示 · <kbd>S</kbd> 发音 · <kbd>←→</kbd> 移动</p>
@@ -368,15 +346,16 @@ onUnmounted(() => { window.removeEventListener('keydown', handleKeydown); clearA
     <template v-if="mode === 'expression'">
       <div class="mb-4 sm:mb-6"><div class="flex justify-between text-xs font-medium mb-2" :style="{ color: 'var(--text-muted)' }"><span>💬 第 {{ expressionIndex + 1 > expressionTasks.length ? expressionTasks.length : expressionIndex + 1 }} / {{ expressionTasks.length }} 题</span><span>✅ {{ expressionStats.completed }}/{{ expressionStats.total }}</span></div><div class="h-1 rounded-full" :style="{ backgroundColor: 'var(--bg-secondary)' }"><div class="h-full rounded-full transition-all duration-300" :style="{ width: expressionProgressPercent + '%', backgroundColor: 'var(--accent)' }"></div></div></div>
       <template v-if="!expressionFinished && currentExpression">
-        <div class="rounded-2xl sm:rounded-3xl p-5 sm:p-8 mb-3 sm:mb-4 text-center" :style="{ backgroundColor: 'var(--bg)', boxShadow: '0 10px 25px -10px rgba(0,0,0,0.08)' }"><p class="text-xs sm:text-sm mb-1.5 sm:mb-2" :style="{ color: 'var(--text-muted)' }">用 Ogden 850 基础词汇表达以下意思：</p><p class="text-2xl sm:text-3xl font-bold" :style="{ color: 'var(--text)' }">{{ currentExpression.zh }}</p></div>
-        <div v-if="!expressionSubmitted" class="mb-3">
+        <div class="rounded-2xl sm:rounded-3xl p-5 sm:p-8 mb-3 sm:mb-4 text-center" :style="{ backgroundColor: 'var(--bg)', boxShadow: '0 10px 25px -10px rgba(0,0,0,0.08)' }"><p class="text-xs sm:text-sm mb-1.5 sm:mb-2" :style="{ color: 'var(--text-muted)' }">用 Ogden 850 基础词汇表达以下意思：</p><div class="flex items-center justify-center gap-2"><p class="text-2xl sm:text-3xl font-bold" :style="{ color: 'var(--text)' }">{{ currentExpression.zh }}</p><button @click.stop="speak" class="text-2xl cursor-pointer transition-all hover:scale-110" :style="{ color: 'var(--accent)' }" title="发音 (S)">🔊</button></div></div>
+        <div v-if="!expressionSubmitted" class="mb-3 relative">
           <div v-if="expressionHintWords.length > 0" class="flex flex-wrap justify-center gap-2 mb-2"><span v-for="(wordObj, i) in hintedWordObjects" :key="i" class="px-2.5 py-1 rounded-lg text-sm font-medium" :style="{ backgroundColor: '#fff0e0', color: '#c96f0e' }">{{ wordObj.text }}</span></div>
-          <div ref="expressionSlotContainer" tabindex="0" class="flex flex-wrap justify-center gap-x-3 sm:gap-x-4 gap-y-2 outline-none p-3 rounded-xl" :style="{ backgroundColor: 'var(--bg-secondary)' }" @keydown="handleExpressionKeydown" @click="focusExpressionSlots">
+          <input ref="hiddenExpressionInput" type="text" class="absolute" style="opacity: 0; width: 1px; height: 1px; top: 50%; left: 50%; z-index: -1; pointer-events: none;" autocorrect="off" autocapitalize="none" autocomplete="off" spellcheck="false" @input="handleHiddenExpressionInput" @keydown="handleExpressionKeydown" />
+          <div class="flex flex-wrap justify-center gap-x-3 sm:gap-x-4 gap-y-2 outline-none p-3 rounded-xl cursor-pointer" :style="{ backgroundColor: 'var(--bg-secondary)' }" @click="focusExpressionSlots">
             <div v-for="(word, wi) in expressionLetterSlots.words" :key="wi" class="flex gap-0.5">
-              <span v-for="(slot, si) in word.slots" :key="si" class="inline-flex items-center justify-center w-7 h-9 sm:w-8 sm:h-10 rounded-md text-base sm:text-lg font-bold font-mono transition-all select-none" :class="{ 'ring-2 ring-[var(--accent)]': !expressionSubmitted && expressionCursor.wordIndex === wi && expressionCursor.letterIndex === si, 'cursor-pointer': !expressionSubmitted }" :style="slot.status === 'auto' ? { backgroundColor: 'transparent', color: 'var(--text-muted)', border: '1px dashed transparent', fontWeight: '400' } : slot.status === 'filled' ? { backgroundColor: '#e3f3e0', color: '#2b7551', border: '1px solid #5fad56' } : slot.status === 'wrong' ? { backgroundColor: '#fdeaec', color: '#b13e3e', border: '1px solid #dc6b4a' } : slot.status === 'hinted' ? { backgroundColor: '#fff8e0', color: '#c96f0e', border: '1px dashed #c96f0e' } : { backgroundColor: 'var(--bg)', color: 'var(--text-muted)', border: '1px dashed var(--border)' }" @click.stop="setExpressionCursor(wi, si)">{{ getSlotDisplay(slot) }}</span>
+              <span v-for="(slot, si) in word.slots" :key="si" class="inline-flex items-center justify-center w-7 h-9 sm:w-8 sm:h-10 rounded-md text-base sm:text-lg font-bold font-mono transition-all select-none" :class="{ 'ring-2 ring-[var(--accent)]': !expressionSubmitted && expressionCursor.wordIndex === wi && expressionCursor.letterIndex === si }" :style="slot.status === 'auto' ? { backgroundColor: 'transparent', color: 'var(--text-muted)', border: '1px dashed transparent', fontWeight: '400' } : slot.status === 'filled' ? { backgroundColor: '#e3f3e0', color: '#2b7551', border: '1px solid #5fad56' } : slot.status === 'wrong' ? { backgroundColor: '#fdeaec', color: '#b13e3e', border: '1px solid #dc6b4a' } : slot.status === 'hinted' ? { backgroundColor: '#fff8e0', color: '#c96f0e', border: '1px dashed #c96f0e' } : { backgroundColor: 'var(--bg)', color: 'var(--text-muted)', border: '1px dashed var(--border)' }" @click.stop="setExpressionCursor(wi, si)">{{ getSlotDisplay(slot) }}</span>
             </div>
           </div>
-          <p class="text-center text-[10px] mt-1.5 opacity-50" :style="{ color: 'var(--text-muted)' }">点击字母块开始输入 · 空格跳单词 · 退格删除 · 全部正确自动提交</p>
+          <p class="text-center text-[10px] mt-1.5 opacity-50" :style="{ color: 'var(--text-muted)' }">点击上方区域开始输入 · 支持手机键盘 · 全部正确自动提交</p>
         </div>
         <div v-if="!expressionSubmitted" class="mt-2 sm:mt-3">
           <div class="flex justify-center gap-1.5 sm:gap-2 items-center flex-wrap">
@@ -391,8 +370,8 @@ onUnmounted(() => { window.removeEventListener('keydown', handleKeydown); clearA
       <template v-if="expressionFinished"><div class="text-center py-16 sm:py-20"><p class="text-4xl sm:text-5xl mb-4">🎉</p><p class="text-2xl sm:text-3xl font-bold mb-4" :style="{ color: 'var(--text)' }">表达训练完成</p><p class="text-base sm:text-lg mb-6 sm:mb-8" :style="{ color: 'var(--text-muted)' }">完成了 {{ expressionStats.total }} 道表达题</p><button @click="restartExpression" class="px-6 sm:px-8 py-2.5 sm:py-3 text-base sm:text-lg rounded-2xl font-semibold" :style="{ backgroundColor: 'var(--accent)', color: '#1A1A2E' }">再来一轮 · R</button></div></template>
     </template>
 
-    <!-- 快捷键浮层 -->
-    <div class="fixed bottom-4 right-4 px-4 py-2 rounded-2xl text-xs z-50 pointer-events-none hidden sm:block" :style="{ backgroundColor: 'rgba(30,30,30,0.85)', color: '#e3dccc', backdropFilter: 'blur(8px)' }">
+    <!-- 快捷键浮层（仅大屏） -->
+    <div class="fixed bottom-4 right-4 px-4 py-2 rounded-2xl text-xs z-50 pointer-events-none hidden lg:block" :style="{ backgroundColor: 'rgba(30,30,30,0.85)', color: '#e3dccc', backdropFilter: 'blur(8px)' }">
       <p class="font-bold mb-1">⌨️ 快捷键</p>
       <p><kbd>S</kbd> 发音 <kbd>R</kbd> 重新开始</p>
       <template v-if="mode === 'flashcard'"><p><kbd>空格</kbd> 翻面 <kbd>A/D</kbd> 切换</p><p><kbd>1</kbd> Again <kbd>2</kbd> Hard <kbd>3</kbd> Good <kbd>4</kbd> Easy</p></template>
