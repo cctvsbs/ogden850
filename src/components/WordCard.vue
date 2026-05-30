@@ -49,7 +49,6 @@ function speakAllExamples() {
   queueNext()
 }
 
-// ===== 音节渲染 =====
 const exampleValidations = computed(() => { if (!props.word?.examples) return []; return props.word.examples.map(ex => getExampleStatus(ex.en)) })
 const phonInfo = computed(() => { if (!props.word?.word) return null; return phoneticData[props.word.word.toLowerCase()] || null })
 const isSame = computed(() => { if (!phonInfo.value) return true; const w = phonInfo.value.written; const s = phonInfo.value.spoken; return w.ipa === s.ipa && w.syllables.join(',') === s.syllables.join(',') })
@@ -107,12 +106,8 @@ onUnmounted(() => { window.removeEventListener('keydown', handleKeydown); clearC
               <div class="flex-1 flex flex-col items-center justify-center p-4 sm:p-6">
                 <div v-if="phonInfo" class="w-full max-w-md mx-auto space-y-3 sm:space-y-4">
                   <template v-if="isSame">
-                    <div class="text-center">
-                      <p class="text-xl sm:text-2xl font-semibold" v-html="renderColoredSyllables(phonInfo.written.syllables, phonInfo.stress)"></p>
-                    </div>
-                    <div class="text-center">
-                      <p class="text-base sm:text-lg" v-html="renderColoredIPA(phonInfo.written.ipa, phonInfo.stress)"></p>
-                    </div>
+                    <div class="text-center"><p class="text-xl sm:text-2xl font-semibold" v-html="renderColoredSyllables(phonInfo.written.syllables, phonInfo.stress)"></p></div>
+                    <div class="text-center"><p class="text-base sm:text-lg" v-html="renderColoredIPA(phonInfo.written.ipa, phonInfo.stress)"></p></div>
                   </template>
                   <template v-else>
                     <div class="grid grid-cols-2 gap-4">
@@ -138,13 +133,14 @@ onUnmounted(() => { window.removeEventListener('keydown', handleKeydown); clearC
                 </div>
                 <div class="flex items-center gap-3">
                   <button @click.stop="toggleSpeechRate" class="px-3 py-1.5 rounded-full text-xs font-medium cursor-pointer border transition-all hover:opacity-80" :style="slowMode ? { backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#1A1A2E' } : { backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border)', color: 'var(--text-secondary)' }">{{ slowMode ? '🐢 0.75x' : '🚶 1x' }}</button>
+                  <button @click.stop="toggleFavorite" class="px-3 py-1.5 rounded-full text-sm cursor-pointer transition-all hover:scale-105" :style="{ backgroundColor: 'var(--bg-secondary)', color: isFav ? '#f59e0b' : 'var(--text-secondary)' }" :title="isFav ? '取消收藏' : '添加收藏'">{{ isFav ? '⭐' : '☆' }}</button>
                 </div>
                 <p class="text-xs" :style="{ color: 'var(--text-muted)' }">点击或空格翻面</p>
               </div>
             </div>
 
             <!-- ==================== 背面 ==================== -->
-            <div class="absolute inset-0 rounded-2xl sm:rounded-3xl p-5 sm:p-7 overflow-y-auto" style="backface-visibility: hidden; transform: rotateY(180deg); min-height: 500px;" :style="{ backgroundColor: 'var(--bg)', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }">
+            <div class="absolute inset-0 rounded-2xl sm:rounded-3xl p-5 sm:p-7 overflow-y-auto" style="backface-visibility: hidden; transform: rotateY(180deg); min-height: 600px;" :style="{ backgroundColor: 'var(--bg)', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }">
               <p class="text-2xl sm:text-3xl font-bold mb-3 sm:mb-4" :style="{ color: 'var(--accent)' }">{{ word.chinese }}</p>
               
               <div class="flex items-center gap-2 mb-1 flex-wrap">
@@ -159,7 +155,10 @@ onUnmounted(() => { window.removeEventListener('keydown', handleKeydown); clearC
                     <span class="text-[10px] sm:text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0" :style="example.type === 'basic' ? { backgroundColor: '#e8f4f8', color: '#1a7a9c' } : { backgroundColor: '#e3f3e0', color: '#2b7551' }">{{ example.type === 'basic' ? 'Basic 例句' : 'Standard 例句' }}</span>
                     <span class="text-[10px] sm:text-xs italic" :style="{ color: 'var(--text-muted)' }">{{ example.type === 'basic' ? (word.basic_explanation || '') : (word.standard_explanation || '') }}</span>
                   </div>
-                  <p class="text-sm sm:text-base mb-1 leading-relaxed" :style="{ color: 'var(--text)' }"><template v-for="(token, ti) in splitExampleTokens(example.en)" :key="ti"><span :class="isOodWord(token.word) ? 'border-b-2 border-dotted border-red-400 text-red-600 cursor-help' : ''" :title="isOodWord(token.word) ? '⚠️ 超纲词（不在 Ogden 850 词表内）' : ''">{{ token.word }}</span>{{ token.space }}</template></p>
+                  <div class="flex items-start justify-between gap-2">
+                    <p class="text-sm sm:text-base mb-1 leading-relaxed" :style="{ color: 'var(--text)' }"><template v-for="(token, ti) in splitExampleTokens(example.en)" :key="ti"><span :class="isOodWord(token.word) ? 'border-b-2 border-dotted border-red-400 text-red-600 cursor-help' : ''" :title="isOodWord(token.word) ? '⚠️ 超纲词（不在 Ogden 850 词表内）' : ''">{{ token.word }}</span>{{ token.space }}</template></p>
+                    <button @click.stop="speakExample(example.en)" class="text-lg cursor-pointer transition-all hover:scale-110 flex-shrink-0 mt-0.5" :style="{ color: 'var(--accent)' }" title="朗读此例句">🔊</button>
+                  </div>
                   <p class="text-xs sm:text-sm leading-relaxed" :style="{ color: 'var(--text-secondary)' }">{{ example.zh }}</p>
                   <p v-if="!exampleValidations[i]?.isCompliant" class="text-[10px] sm:text-xs mt-1" :style="{ color: 'var(--text-muted)' }">⚠️ {{ exampleValidations[i].outOfRangeWords.length }} 个超纲词</p>
                   <p v-else class="text-[10px] sm:text-xs mt-1" :style="{ color: 'var(--success)' }">✅ Ogden 850 合规</p>

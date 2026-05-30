@@ -24,12 +24,38 @@ watch(() => route.query.mode, (newMode) => {
   if (newMode && ['flashcard', 'choice', 'spelling', 'expression'].includes(newMode)) switchMode(newMode)
 })
 
+// ===== 滑动切换（移动端） =====
+const touchStartX = ref(0)
+const touchStartY = ref(0)
+const modeOrder = ['flashcard', 'choice', 'spelling', 'expression']
+
+function handleTouchStart(e) {
+  touchStartX.value = e.touches[0].clientX
+  touchStartY.value = e.touches[0].clientY
+}
+
+function handleTouchEnd(e) {
+  const dx = e.changedTouches[0].clientX - touchStartX.value
+  const dy = e.changedTouches[0].clientY - touchStartY.value
+  
+  // 水平滑动且幅度大于 50px，且不是垂直滑动
+  if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 50) {
+    const currentIdx = modeOrder.indexOf(mode.value)
+    if (dx < 0 && currentIdx < modeOrder.length - 1) {
+      switchMode(modeOrder[currentIdx + 1])
+    } else if (dx > 0 && currentIdx > 0) {
+      switchMode(modeOrder[currentIdx - 1])
+    }
+  }
+}
+
 const audioCtx = ref(null)
 function getAudioCtx() { if (!audioCtx.value) audioCtx.value = new (window.AudioContext || window.webkitAudioContext)(); return audioCtx.value }
 function playChoiceSound(correct) { try { const ctx = getAudioCtx(); const osc = ctx.createOscillator(); const gain = ctx.createGain(); osc.connect(gain); gain.connect(ctx.destination); gain.gain.setValueAtTime(0.22, ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35); if (correct) { osc.frequency.setValueAtTime(523, ctx.currentTime); osc.frequency.setValueAtTime(659, ctx.currentTime + 0.1); osc.frequency.setValueAtTime(784, ctx.currentTime + 0.2) } else { osc.frequency.setValueAtTime(200, ctx.currentTime); osc.frequency.setValueAtTime(160, ctx.currentTime + 0.15) } osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.35) } catch { /* */ } }
 function playFinishSound() { try { const ctx = getAudioCtx(); [523, 659, 784, 1047].forEach((freq, i) => { const osc = ctx.createOscillator(); const gain = ctx.createGain(); osc.connect(gain); gain.connect(ctx.destination); osc.type = 'sine'; osc.frequency.setValueAtTime(freq, ctx.currentTime + i * 0.12); gain.gain.setValueAtTime(0.18, ctx.currentTime + i * 0.12); gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.12 + 0.25); osc.start(ctx.currentTime + i * 0.12); osc.stop(ctx.currentTime + i * 0.12 + 0.25) }) } catch { /* */ } }
 function playFlipSound() { try { const ctx = getAudioCtx(); const bufferSize = ctx.sampleRate * 0.12; const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate); const data = buffer.getChannelData(0); for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.03)); const noise = ctx.createBufferSource(); noise.buffer = buffer; const filter = ctx.createBiquadFilter(); filter.type = 'bandpass'; filter.frequency.setValueAtTime(3000, ctx.currentTime); filter.Q.setValueAtTime(0.8, ctx.currentTime); const gain = ctx.createGain(); gain.gain.setValueAtTime(0.06, ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12); noise.connect(filter); filter.connect(gain); gain.connect(ctx.destination); noise.start(ctx.currentTime); noise.stop(ctx.currentTime + 0.12) } catch { /* */ } }
 function playNavSound() { try { const ctx = getAudioCtx(); const osc = ctx.createOscillator(); const gain = ctx.createGain(); osc.connect(gain); gain.connect(ctx.destination); osc.type = 'sine'; osc.frequency.setValueAtTime(800, ctx.currentTime); osc.frequency.setValueAtTime(600, ctx.currentTime + 0.05); gain.gain.setValueAtTime(0.08, ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1); osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.1) } catch { /* */ } }
+function playTypeSound() { try { const ctx = getAudioCtx(); const osc = ctx.createOscillator(); const gain = ctx.createGain(); osc.connect(gain); gain.connect(ctx.destination); osc.type = 'square'; osc.frequency.setValueAtTime(1200, ctx.currentTime); gain.gain.setValueAtTime(0.03, ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.04); osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.04) } catch { /* */ } }
 
 // ===== 语音引擎 =====
 let currentVoice = null; let availableVoices = []
@@ -108,62 +134,26 @@ function splitExampleTokens(sentence) { const tokens = []; const regex = /(\S+)(
 function speakFlashcardWord() { if (currentCard.value) { window.speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(currentCard.value.word); u.lang = selectedAccent.value === 'uk' ? 'en-GB' : 'en-US'; u.rate = selectedRate.value; if (currentVoice) u.voice = currentVoice; window.speechSynthesis.speak(u) } }
 function speakFlashcardExample() { if (currentCard.value?.examples?.[0]) { window.speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(currentCard.value.examples[0].en); u.lang = selectedAccent.value === 'uk' ? 'en-GB' : 'en-US'; u.rate = selectedRate.value; if (currentVoice) u.voice = currentVoice; window.speechSynthesis.speak(u) } }
 
-// ===== 安全洗牌算法 =====
-function shuffleArray(array) {
-  const arr = [...array]
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]]
-  }
-  return arr
-}
-
 // ===== 选择题 =====
 const choiceQueue = ref([]); const choiceIndex = ref(0); const choiceOptions = ref([])
 const highlightedOption = ref(null); const confirmedOption = ref(null); const isAnswered = ref(false)
 const choiceStats = ref({ correct: 0, wrong: 0 }); const roundSize = 10
+const choiceTotalCorrect = ref(parseInt(localStorage.getItem('ogden850-choice-total-correct') || '0'))
+const choiceTotalWrong = ref(parseInt(localStorage.getItem('ogden850-choice-total-wrong') || '0'))
 
-function generateOptions(correctWord) {
-  if (!correctWord) return []
-  const others = store.words.filter(w => w.id !== correctWord.id)
-  const shuffledOthers = shuffleArray(others)
-  const distractors = shuffledOthers.slice(0, 3).map(w => w.chinese)
-  const rawOptions = [
-    { text: correctWord.chinese, correct: true },
-    ...distractors.map(t => ({ text: t, correct: false }))
-  ]
-  return shuffleArray(rawOptions)
-}
-
-function initChoiceMode() {
-  const pool = store.dueWords && store.dueWords.length > 0
-    ? [...store.dueWords]
-    : [...(store.unmasteredWords || [])]
-  if (pool.length === 0) return
-  const shuffledPool = shuffleArray(pool)
-  choiceQueue.value = shuffledPool.slice(0, roundSize)
-  choiceIndex.value = 0
-  if (choiceQueue.value[0]) {
-    choiceOptions.value = generateOptions(choiceQueue.value[0])
-  }
-  highlightedOption.value = null
-  confirmedOption.value = null
-  isAnswered.value = false
-  choiceStats.value = { correct: 0, wrong: 0 }
-  choiceSlowMode.value = false
-  selectedRate.value = 1.0
-}
-
+function shuffleArray(array) { const arr = [...array]; for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]] } return arr }
+function generateOptions(correctWord) { if (!correctWord) return []; const others = store.words.filter(w => w.id !== correctWord.id); const shuffledOthers = shuffleArray(others); const distractors = shuffledOthers.slice(0, 3).map(w => w.chinese); const rawOptions = [{ text: correctWord.chinese, correct: true }, ...distractors.map(t => ({ text: t, correct: false }))]; return shuffleArray(rawOptions) }
+function initChoiceMode() { const pool = store.dueWords && store.dueWords.length > 0 ? [...store.dueWords] : [...(store.unmasteredWords || [])]; if (pool.length === 0) return; const shuffledPool = shuffleArray(pool); choiceQueue.value = shuffledPool.slice(0, roundSize); choiceIndex.value = 0; if (choiceQueue.value[0]) { choiceOptions.value = generateOptions(choiceQueue.value[0]) }; highlightedOption.value = null; confirmedOption.value = null; isAnswered.value = false; choiceStats.value = { correct: 0, wrong: 0 }; choiceSlowMode.value = false; selectedRate.value = 1.0 }
 const currentChoice = computed(() => choiceQueue.value.length === 0 ? null : choiceQueue.value[choiceIndex.value])
 const choiceFinished = computed(() => choiceQueue.value.length > 0 && choiceIndex.value >= choiceQueue.value.length)
 const choiceProgressPercent = computed(() => choiceQueue.value.length === 0 ? 0 : (choiceIndex.value / choiceQueue.value.length) * 100)
-function selectChoice(index) { if (isAnswered.value) return; isAnswered.value = true; confirmedOption.value = index; highlightedOption.value = index; const correct = choiceOptions.value[index].correct; playChoiceSound(correct); if (correct) choiceStats.value.correct++; else choiceStats.value.wrong++; saveAllProgress(); setTimeout(() => { if (choiceIndex.value + 1 >= choiceQueue.value.length) { choiceIndex.value++; saveAllProgress(); setTimeout(() => playFinishSound(), 100) } else { choiceIndex.value++; if (choiceQueue.value[choiceIndex.value]) choiceOptions.value = generateOptions(choiceQueue.value[choiceIndex.value]); highlightedOption.value = null; confirmedOption.value = null; isAnswered.value = false } }, 800) }
+function selectChoice(index) { if (isAnswered.value) return; isAnswered.value = true; confirmedOption.value = index; highlightedOption.value = index; const correct = choiceOptions.value[index].correct; playChoiceSound(correct); if (correct) { choiceStats.value.correct++; choiceTotalCorrect.value++; localStorage.setItem('ogden850-choice-total-correct', choiceTotalCorrect.value) } else { choiceStats.value.wrong++; choiceTotalWrong.value++; localStorage.setItem('ogden850-choice-total-wrong', choiceTotalWrong.value) }; saveAllProgress(); setTimeout(() => { if (choiceIndex.value + 1 >= choiceQueue.value.length) { choiceIndex.value++; saveAllProgress(); setTimeout(() => playFinishSound(), 100) } else { choiceIndex.value++; if (choiceQueue.value[choiceIndex.value]) choiceOptions.value = generateOptions(choiceQueue.value[choiceIndex.value]); highlightedOption.value = null; confirmedOption.value = null; isAnswered.value = false } }, 800) }
 function highlightChoice(index) { if (isAnswered.value) return; highlightedOption.value = index }
 function confirmChoice() { if (highlightedOption.value === null || isAnswered.value) return; selectChoice(highlightedOption.value) }
 function cancelChoice() { if (isAnswered.value) return; highlightedOption.value = null }
 function restartChoice() { initChoiceMode() }
 
-// ===== 拼写（隐藏 input 移动端优化版） =====
+// ===== 拼写 =====
 const spellingQueue = ref([]); const spellingIndex = ref(0)
 const isSpellingSubmitted = ref(false); const isSpellingCorrect = ref(false)
 const hidePhonetic = ref(true)
@@ -201,7 +191,7 @@ function setSpellingCursor(idx) { spellingCursor.value = idx; focusSpellingSlots
 
 function handleHiddenSpellingInput(e) {
   const input = e.target; const val = input.value
-  if (val.length > 1) { const char = val.charAt(val.length - 1); if (/^[a-zA-Z]$/.test(char)) { spellingUserInput.value[spellingCursor.value] = char.toLowerCase(); if (spellingCursor.value < spellingLetterSlots.value.length - 1) spellingCursor.value++ } }
+  if (val.length > 1) { const char = val.charAt(val.length - 1); if (/^[a-zA-Z]$/.test(char)) { spellingUserInput.value[spellingCursor.value] = char.toLowerCase(); playTypeSound(); if (spellingCursor.value < spellingLetterSlots.value.length - 1) spellingCursor.value++ } }
   else if (val.length === 0) { const slot = spellingLetterSlots.value[spellingCursor.value]; if (slot && slot.status !== 'pending') { delete spellingUserInput.value[spellingCursor.value] } else if (spellingCursor.value > 0) { spellingCursor.value--; delete spellingUserInput.value[spellingCursor.value] } }
   input.value = ' '
 }
@@ -260,7 +250,7 @@ function focusExpressionSlots() { const input = hiddenExpressionInput.value; if 
 function setExpressionCursor(wi, si) { expressionCursor.value = { wordIndex: wi, letterIndex: si }; focusExpressionSlots() }
 function handleHiddenExpressionInput(e) {
   if (expressionSubmitted.value) return; const input = e.target; const val = input.value
-  if (val.length > 1) { const char = val.charAt(val.length - 1); if (char === ' ') { const cursor = expressionCursor.value; const slots = expressionLetterSlots.value.words; const nextWord = cursor.wordIndex + 1; if (nextWord < slots.length) { const firstLetter = slots[nextWord].slots.findIndex(s => s.status !== 'auto'); if (firstLetter >= 0) expressionCursor.value = { wordIndex: nextWord, letterIndex: firstLetter } } } else if (/^[a-zA-Z]$/.test(char)) { const cursor = expressionCursor.value; const slot = expressionLetterSlots.value.words[cursor.wordIndex]?.slots[cursor.letterIndex]; if (slot && slot.status !== 'auto') { expressionUserInput.value[slot.key] = char.toLowerCase(); const next = findNextSlot(cursor.wordIndex, cursor.letterIndex); if (next) expressionCursor.value = next } } }
+  if (val.length > 1) { const char = val.charAt(val.length - 1); if (char === ' ') { const cursor = expressionCursor.value; const slots = expressionLetterSlots.value.words; const nextWord = cursor.wordIndex + 1; if (nextWord < slots.length) { const firstLetter = slots[nextWord].slots.findIndex(s => s.status !== 'auto'); if (firstLetter >= 0) expressionCursor.value = { wordIndex: nextWord, letterIndex: firstLetter } } } else if (/^[a-zA-Z]$/.test(char)) { const cursor = expressionCursor.value; const slot = expressionLetterSlots.value.words[cursor.wordIndex]?.slots[cursor.letterIndex]; if (slot && slot.status !== 'auto') { expressionUserInput.value[slot.key] = char.toLowerCase(); playTypeSound(); const next = findNextSlot(cursor.wordIndex, cursor.letterIndex); if (next) expressionCursor.value = next } } }
   else if (val.length === 0) { const cursor = expressionCursor.value; const slot = expressionLetterSlots.value.words[cursor.wordIndex]?.slots[cursor.letterIndex]; if (slot && slot.status !== 'auto' && slot.status !== 'pending') { delete expressionUserInput.value[slot.key] } else { const prev = findPrevSlot(cursor.wordIndex, cursor.letterIndex); if (prev) { expressionCursor.value = prev; delete expressionUserInput.value[expressionLetterSlots.value.words[prev.wordIndex].slots[prev.letterIndex].key] } } }
   input.value = ' '
 }
@@ -291,7 +281,7 @@ onUnmounted(() => { window.removeEventListener('keydown', handleKeydown); clearA
 </script>
 
 <template>
-  <div class="w-full max-w-2xl mx-auto px-3 sm:px-4 py-4 sm:py-8">
+  <div class="w-full max-w-2xl mx-auto px-3 sm:px-4 py-4 sm:py-8" @touchstart="handleTouchStart" @touchend="handleTouchEnd">
     <div class="flex justify-center items-center gap-1.5 sm:gap-2 mb-5 sm:mb-8 flex-wrap">
       <button @click="switchMode('flashcard')" class="px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-full text-xs sm:text-sm font-semibold transition-all cursor-pointer" :style="mode === 'flashcard' ? { backgroundColor: 'var(--accent)', color: '#1A1A2E' } : { backgroundColor: 'var(--bg-secondary)', color: 'var(--text-secondary)' }">🃏 闪卡</button>
       <button @click="switchMode('choice')" class="px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-full text-xs sm:text-sm font-semibold transition-all cursor-pointer" :style="mode === 'choice' ? { backgroundColor: 'var(--accent)', color: '#1A1A2E' } : { backgroundColor: 'var(--bg-secondary)', color: 'var(--text-secondary)' }">📝 选择</button>
@@ -305,17 +295,9 @@ onUnmounted(() => { window.removeEventListener('keydown', handleKeydown); clearA
       <template v-if="!flashcardFinished && currentCard">
         <div class="mb-4 sm:mb-6 cursor-pointer" style="perspective: 1400px;" @click="toggleFlip"><div class="relative w-full transition-transform duration-500" style="transform-style: preserve-3d; min-height: 450px;" :style="{ transform: isFlipped ? 'rotateY(180deg)' : '' }">
           <div class="absolute inset-0 rounded-3xl p-6 sm:p-8 flex flex-col justify-between" style="backface-visibility: hidden;" :style="{ backgroundColor: 'var(--bg)', boxShadow: '0 10px 25px -10px rgba(0,0,0,0.08), 0 0 0 1px var(--border)' }">
-            <div class="flex-1 flex flex-col justify-center items-center">
-              <div class="flex items-center justify-center gap-2">
-                <p class="text-5xl sm:text-6xl font-bold word-display" :style="{ color: 'var(--text)' }">{{ currentCard.word }}</p>
-                <button @click.stop="speakFlashcardWord" class="text-2xl sm:text-3xl cursor-pointer transition-all hover:scale-110" :style="{ color: 'var(--accent)' }" title="单词发音">🔊</button>
-              </div>
-              <span class="text-xs sm:text-sm px-3 sm:px-4 py-1 rounded-full mt-2" :style="{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text-muted)' }">{{ currentCard.phonetic }}</span><div class="mt-4 sm:mt-6 rounded-2xl flex items-center justify-center overflow-hidden w-full" :style="{ backgroundColor: 'var(--bg-secondary)', minHeight: '200px' }"><img v-if="currentImageUrl" :src="currentImageUrl" class="w-full max-h-48 object-cover" alt="illustration" /><div v-else class="text-xs sm:text-sm py-8 flex flex-col items-center justify-center" :style="{ color: 'var(--text-muted)' }"><span v-if="imageLoading && !isOffline" class="animate-pulse">🎨 加载中...</span><span v-else>🖼️ 暂无图片</span></div></div></div><p class="text-xs text-center mt-3" :style="{ color: 'var(--text-muted)' }">⤴️ 点击/空格翻面</p></div>
+            <div class="flex-1 flex flex-col justify-center items-center"><div class="flex items-center justify-center gap-2"><p class="text-5xl sm:text-6xl font-bold word-display" :style="{ color: 'var(--text)' }">{{ currentCard.word }}</p><button @click.stop="speakFlashcardWord" class="text-2xl sm:text-3xl cursor-pointer transition-all hover:scale-110" :style="{ color: 'var(--accent)' }" title="单词发音">🔊</button></div><span class="text-xs sm:text-sm px-3 sm:px-4 py-1 rounded-full mt-2" :style="{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text-muted)' }">{{ currentCard.phonetic }}</span><div class="mt-4 sm:mt-6 rounded-2xl flex items-center justify-center overflow-hidden w-full" :style="{ backgroundColor: 'var(--bg-secondary)', minHeight: '200px' }"><img v-if="currentImageUrl" :src="currentImageUrl" class="w-full max-h-48 object-cover" alt="illustration" /><div v-else class="text-xs sm:text-sm py-8 flex flex-col items-center justify-center" :style="{ color: 'var(--text-muted)' }"><span v-if="imageLoading && !isOffline" class="animate-pulse">🎨 加载中...</span><span v-else>🖼️ 暂无图片</span></div></div></div><p class="text-xs text-center mt-3" :style="{ color: 'var(--text-muted)' }">⤴️ 点击/空格翻面</p></div>
           <div class="absolute inset-0 rounded-3xl p-5 sm:p-8 flex flex-col justify-between overflow-y-auto" style="backface-visibility: hidden; transform: rotateY(180deg);" :style="{ backgroundColor: 'var(--bg)', boxShadow: '0 10px 25px -10px rgba(0,0,0,0.08), 0 0 0 1px var(--border)' }"><div class="flex-1">
-            <div class="mb-3 sm:mb-4 pb-2 sm:pb-3 border-b flex items-center justify-between" :style="{ borderColor: 'var(--border)' }">
-              <div><p class="text-[10px] sm:text-xs uppercase font-semibold" :style="{ color: 'var(--accent)' }">📖 单词</p><p class="text-lg sm:text-xl font-bold mt-1" :style="{ color: 'var(--text)' }">{{ currentCard.word }}<span class="mx-3 sm:mx-4 opacity-30" :style="{ color: 'var(--text-muted)' }">|</span><span class="text-base sm:text-lg font-medium" :style="{ color: 'var(--accent)' }">{{ currentCard.chinese }}</span></p></div>
-              <button @click.stop="speakFlashcardWord" class="text-xl cursor-pointer transition-all hover:scale-110 flex-shrink-0 ml-2" :style="{ color: 'var(--accent)' }" title="单词发音">🔊</button>
-            </div>
+            <div class="mb-3 sm:mb-4 pb-2 sm:pb-3 border-b flex items-center justify-between" :style="{ borderColor: 'var(--border)' }"><div><p class="text-[10px] sm:text-xs uppercase font-semibold" :style="{ color: 'var(--accent)' }">📖 单词</p><p class="text-lg sm:text-xl font-bold mt-1" :style="{ color: 'var(--text)' }">{{ currentCard.word }}<span class="mx-3 sm:mx-4 opacity-30" :style="{ color: 'var(--text-muted)' }">|</span><span class="text-base sm:text-lg font-medium" :style="{ color: 'var(--accent)' }">{{ currentCard.chinese }}</span></p></div><button @click.stop="speakFlashcardWord" class="text-xl cursor-pointer transition-all hover:scale-110 flex-shrink-0 ml-2" :style="{ color: 'var(--accent)' }" title="单词发音">🔊</button></div>
             <div class="mb-3 sm:mb-4 pb-2 sm:pb-3 border-b" :style="{ borderColor: 'var(--border)' }"><p class="text-[10px] sm:text-xs uppercase font-semibold" :style="{ color: 'var(--accent)' }">🗣️ 音标</p><p class="text-base sm:text-lg mt-1" :style="{ color: 'var(--text-muted)' }">{{ currentCard.phonetic }}</p></div>
             <div v-if="currentCard.examples?.[0]" class="mb-3 sm:mb-4"><p class="text-[10px] sm:text-xs uppercase font-semibold" :style="{ color: 'var(--accent)' }">📝 例句</p><div class="mt-2 p-2.5 sm:p-3 rounded-2xl" :style="{ backgroundColor: 'var(--bg-secondary)' }"><div class="flex items-start justify-between gap-2"><p class="text-sm sm:text-base leading-relaxed mb-1" :style="{ color: 'var(--text)' }"><template v-for="(token, ti) in splitExampleTokens(currentCard.examples[0].en)" :key="ti"><span :class="isOodWord(token.word) ? 'border-b-2 border-dotted border-red-400 text-red-600 cursor-help' : ''" :title="isOodWord(token.word) ? '⚠️ 超纲词' : ''">{{ token.word }}</span>{{ token.space }}</template></p><button @click.stop="speakFlashcardExample" class="text-lg cursor-pointer transition-all hover:scale-110 flex-shrink-0 mt-0.5" :style="{ color: 'var(--accent)' }" title="例句发音">🔊</button></div><p class="text-xs sm:text-sm" :style="{ color: 'var(--accent)' }">{{ currentCard.examples[0].zh }}</p></div></div>
           </div>
@@ -343,21 +325,17 @@ onUnmounted(() => { window.removeEventListener('keydown', handleKeydown); clearA
 
     <!-- ==================== 选择 ==================== -->
     <template v-if="mode === 'choice'">
-      <div class="mb-4 sm:mb-6"><div class="flex justify-between text-xs font-medium mb-2" :style="{ color: 'var(--text-muted)' }"><span>📝 第 {{ choiceIndex + 1 > choiceQueue.length ? choiceQueue.length : choiceIndex + 1 }} / {{ choiceQueue.length }} 题</span><span>✅ {{ choiceStats.correct }} ❌ {{ choiceStats.wrong }}</span></div><div class="h-1 rounded-full" :style="{ backgroundColor: 'var(--bg-secondary)' }"><div class="h-full rounded-full transition-all duration-300" :style="{ width: choiceProgressPercent + '%', backgroundColor: 'var(--accent)' }"></div></div></div>
+      <div class="mb-4 sm:mb-6"><div class="flex justify-between text-xs font-medium mb-2" :style="{ color: 'var(--text-muted)' }"><span>📝 第 {{ choiceIndex + 1 > choiceQueue.length ? choiceQueue.length : choiceIndex + 1 }} / {{ choiceQueue.length }} 题</span><span>✅ {{ choiceStats.correct }} ❌ {{ choiceStats.wrong }} | 📊 累计 ✅{{ choiceTotalCorrect }} ❌{{ choiceTotalWrong }}</span></div><div class="h-1 rounded-full" :style="{ backgroundColor: 'var(--bg-secondary)' }"><div class="h-full rounded-full transition-all duration-300" :style="{ width: choiceProgressPercent + '%', backgroundColor: 'var(--accent)' }"></div></div></div>
       <template v-if="!choiceFinished && currentChoice"><div class="rounded-2xl sm:rounded-3xl p-5 sm:p-8 mb-3 sm:mb-4 text-center" :style="{ backgroundColor: 'var(--bg)', boxShadow: '0 10px 25px -10px rgba(0,0,0,0.08)' }"><p class="text-xs sm:text-sm mb-1.5" :style="{ color: 'var(--text-muted)' }">以下单词的中文意思是？</p><div class="flex items-center justify-center gap-2"><p class="text-4xl sm:text-5xl font-bold word-display" :style="{ color: 'var(--text)' }">{{ currentChoice.word }}</p><button @click.stop="speak" class="text-2xl cursor-pointer transition-all hover:scale-110" :style="{ color: 'var(--accent)' }" title="发音 (S)">🔊</button></div><p class="text-base sm:text-lg mt-1.5" :style="{ color: 'var(--text-muted)' }">{{ currentChoice.phonetic }}</p></div>
         <p v-if="!isAnswered" class="text-center text-xs mb-3 text-gray-400"><span class="hidden sm:inline">键盘：<kbd>1-4</kbd> 选择 · <kbd>Enter</kbd> 确认 &nbsp;|&nbsp; </span>直接点击选项提交</p>
-        <div v-if="choiceOptions && choiceOptions.length" class="grid grid-cols-1 gap-2.5 sm:gap-3 w-full">
-          <button v-for="(option, i) in choiceOptions" :key="i" @click="selectChoice(i)" class="w-full text-left px-4 sm:px-6 py-3.5 sm:py-4 rounded-xl sm:rounded-2xl text-base sm:text-lg font-medium transition-all cursor-pointer active:scale-[0.98]" :class="{ 'cursor-default': isAnswered }" :style="isAnswered ? (option.correct ? { backgroundColor: '#e3f3e0', color: '#2b7551', border: '2px solid #5fad56' } : (confirmedOption === i ? { backgroundColor: '#fdeaec', color: '#b13e3e', border: '2px solid #dc6b4a' } : { backgroundColor: 'var(--bg-secondary, #f3f4f6)', color: 'var(--text-muted, #9ca3af)', opacity: '0.5' })) : (highlightedOption === i ? { backgroundColor: 'var(--bg-secondary, #f3f4f6)', color: 'var(--text, #1f2937)', border: '2px solid var(--accent, #3b82f6)', boxShadow: '0 0 0 2px var(--accent, #3b82f6)' } : { backgroundColor: 'var(--bg, #ffffff)', color: 'var(--text, #1f2937)', border: '2px solid var(--border, #e5e7eb)' })">
-            <span class="inline-flex items-center justify-center w-6 h-6 sm:w-7 sm:h-7 rounded-full text-xs sm:text-sm text-center mr-2 sm:mr-3 font-bold" :style="isAnswered && option.correct ? { backgroundColor: '#5fad56', color: '#fff' } : (isAnswered && confirmedOption === i ? { backgroundColor: '#dc6b4a', color: '#fff' } : (highlightedOption === i ? { backgroundColor: 'var(--accent, #3b82f6)', color: '#1A1A2E' } : { backgroundColor: 'var(--bg-secondary, #f3f4f6)', color: 'var(--text-muted, #9ca3af)' }))">{{ i + 1 }}</span>{{ option.text }}
-          </button>
-        </div>
+        <div v-if="choiceOptions && choiceOptions.length" class="grid grid-cols-1 gap-2.5 sm:gap-3 w-full"><button v-for="(option, i) in choiceOptions" :key="i" @click="selectChoice(i)" class="w-full text-left px-4 sm:px-6 py-3.5 sm:py-4 rounded-xl sm:rounded-2xl text-base sm:text-lg font-medium transition-all cursor-pointer active:scale-[0.98]" :class="{ 'cursor-default': isAnswered }" :style="isAnswered ? (option.correct ? { backgroundColor: '#e3f3e0', color: '#2b7551', border: '2px solid #5fad56' } : (confirmedOption === i ? { backgroundColor: '#fdeaec', color: '#b13e3e', border: '2px solid #dc6b4a' } : { backgroundColor: 'var(--bg-secondary, #f3f4f6)', color: 'var(--text-muted, #9ca3af)', opacity: '0.5' })) : (highlightedOption === i ? { backgroundColor: 'var(--bg-secondary, #f3f4f6)', color: 'var(--text, #1f2937)', border: '2px solid var(--accent, #3b82f6)', boxShadow: '0 0 0 2px var(--accent, #3b82f6)' } : { backgroundColor: 'var(--bg, #ffffff)', color: 'var(--text, #1f2937)', border: '2px solid var(--border, #e5e7eb)' })"><span class="inline-flex items-center justify-center w-6 h-6 sm:w-7 sm:h-7 rounded-full text-xs sm:text-sm text-center mr-2 sm:mr-3 font-bold" :style="isAnswered && option.correct ? { backgroundColor: '#5fad56', color: '#fff' } : (isAnswered && confirmedOption === i ? { backgroundColor: '#dc6b4a', color: '#fff' } : (highlightedOption === i ? { backgroundColor: 'var(--accent, #3b82f6)', color: '#1A1A2E' } : { backgroundColor: 'var(--bg-secondary, #f3f4f6)', color: 'var(--text-muted, #9ca3af)' }))">{{ i + 1 }}</span>{{ option.text }}</button></div>
         <div class="flex justify-center mt-4 sm:mt-5 gap-2 sm:gap-2.5 items-center">
           <button @click="choiceSlowMode = !choiceSlowMode; selectedRate = choiceSlowMode ? 0.75 : 1.0" class="px-2 py-1.5 rounded-full text-xs font-medium cursor-pointer border transition-all hover:opacity-80" :style="choiceSlowMode ? { backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#1A1A2E' } : { backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border)', color: 'var(--text)' }">{{ choiceSlowMode ? '🐢 0.75x' : '🚶 1x' }}</button>
           <button @click="speak" class="px-3 py-1.5 rounded-full text-xs cursor-pointer" :style="{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text)' }" title="朗读 (S)">🔊</button>
           <button @click.stop="toggleFavChoice" class="px-3 py-1.5 rounded-full text-xs cursor-pointer" :style="{ backgroundColor: 'var(--bg-secondary)', color: isFavChoice ? '#f59e0b' : 'var(--text)' }" :title="isFavChoice ? '取消收藏' : '添加收藏'">{{ isFavChoice ? '⭐' : '☆' }}</button>
         </div>
       </template>
-      <template v-if="choiceFinished"><div class="text-center py-16 sm:py-20"><p class="text-4xl sm:text-5xl mb-4">🎉</p><p class="text-2xl sm:text-3xl font-bold mb-4" :style="{ color: 'var(--text)' }">答题结束</p><p class="text-lg sm:text-xl mb-2" :style="{ color: 'var(--success)' }">✅ {{ choiceStats.correct }} 题</p><p class="text-lg sm:text-xl mb-6 sm:mb-8" :style="{ color: 'var(--danger)' }">❌ {{ choiceStats.wrong }} 题</p><button @click="restartChoice" class="px-6 sm:px-8 py-2.5 sm:py-3 text-base sm:text-lg rounded-2xl font-semibold" :style="{ backgroundColor: 'var(--accent)', color: '#1A1A2E' }">再来一轮 · R</button></div></template>
+      <template v-if="choiceFinished"><div class="text-center py-16 sm:py-20"><p class="text-4xl sm:text-5xl mb-4">🎉</p><p class="text-2xl sm:text-3xl font-bold mb-4" :style="{ color: 'var(--text)' }">答题结束</p><p class="text-lg sm:text-xl mb-2" :style="{ color: 'var(--success)' }">✅ {{ choiceStats.correct }} 题</p><p class="text-lg sm:text-xl mb-2" :style="{ color: 'var(--danger)' }">❌ {{ choiceStats.wrong }} 题</p><p class="text-xs mb-6 sm:mb-8" :style="{ color: 'var(--text-muted)' }">📊 历史累计：正确 {{ choiceTotalCorrect }} 题，错误 {{ choiceTotalWrong }} 题</p><button @click="restartChoice" class="px-6 sm:px-8 py-2.5 sm:py-3 text-base sm:text-lg rounded-2xl font-semibold" :style="{ backgroundColor: 'var(--accent)', color: '#1A1A2E' }">再来一轮 · R</button></div></template>
     </template>
 
     <!-- ==================== 拼写 ==================== -->
