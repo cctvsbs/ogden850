@@ -2,13 +2,22 @@
 import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useWordsStore } from '@/stores/words'
 import { useRouter } from 'vue-router'
+import { THEMES, THEME_CONFIG } from '@/config/themes'
+import { CHANGELOG } from '@/data/changelog'
+import { POS_MAP, getPosTag } from '@/utils/posUtils'
+import { settingsService } from '@/services/storageService'
+import { toDateString } from '@/utils/dateUtils'
 
 const store = useWordsStore()
 const router = useRouter()
 
-const themes = ['cream', 'kraft', 'night', 'green']
-const themeLabels = { cream: '米白', kraft: '牛皮纸', night: '暗夜', green: '护眼' }
-const themeIcons = { cream: '☀️', kraft: '📜', night: '🌙', green: '🌿' }
+const themes = THEMES
+const themeLabels = {}
+const themeIcons = {}
+for (const t of themes) {
+  themeLabels[t] = THEME_CONFIG[t].label
+  themeIcons[t] = THEME_CONFIG[t].icon
+}
 const currentTheme = ref('cream')
 const isFullscreen = ref(false)
 const showThemeMenu = ref(false)
@@ -16,10 +25,10 @@ const showChangelog = ref(false)
 const showContact = ref(false)
 let closeTimer = null
 
-const version = 'v0.6.0'
+const version = `v${__APP_VERSION__}`
 
-onMounted(() => {
-  const saved = localStorage.getItem('ogden850-theme')
+onMounted(async () => {
+  const saved = await settingsService.get('ogden850-theme')
   if (saved && themes.includes(saved)) {
     currentTheme.value = saved
   }
@@ -28,17 +37,16 @@ onMounted(() => {
   initFab()
 })
 
-function applyTheme(theme) { document.documentElement.setAttribute('data-theme', theme); localStorage.setItem('ogden850-theme', theme) }
+async function applyTheme(theme) { document.documentElement.setAttribute('data-theme', theme); await settingsService.set('ogden850-theme', theme) }
 function selectTheme(theme) { currentTheme.value = theme; applyTheme(theme); showThemeMenu.value = false; if (closeTimer) clearTimeout(closeTimer) }
 function openThemeMenu() { showThemeMenu.value = true; if (closeTimer) clearTimeout(closeTimer) }
 function scheduleClose() { closeTimer = setTimeout(() => { showThemeMenu.value = false }, 200) }
 function cancelClose() { if (closeTimer) clearTimeout(closeTimer) }
 function toggleFullscreen() { if (!document.fullscreenElement) { document.documentElement.requestFullscreen() } else { document.exitFullscreen() } }
 
-function getPosTag(category) { const map = { operations: '操作词', thingsGeneral: '名词', thingsPicturable: '名词', qualitiesGeneral: '形容词', qualitiesOpposite: '形容词' }; return map[category] || '' }
 function downloadPDF() {
   const rows = store.words.map(w => `<tr><td>${w.word}</td><td>${w.chinese}</td><td>${w.phonetic || ''}</td><td>${getPosTag(w.category)}</td></tr>`).join('')
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Ogden 850 Word List</title><style>body{font-family:sans-serif;padding:20px}h1{font-size:18px;margin-bottom:5px}p{font-size:12px;color:#666;margin-bottom:15px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border:1px solid #ddd;padding:4px 8px;text-align:left}th{background:#f5f5f5}@media print{button{display:none}}</style></head><body><h1>Ogden 850 Basic English Word List</h1><p>Total: 850 words | Date: ${new Date().toISOString().slice(0,10)}</p><table><thead><tr><th>Word</th><th>Chinese</th><th>Phonetic</th><th>POS</th></tr></thead><tbody>${rows}</tbody></table><p style="text-align:center;margin-top:20px"><button onclick="window.print()" style="padding:10px 30px;font-size:14px">🖨️ 打印 / 导出 PDF</button></p></body></html>`
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Ogden 850 Word List</title><style>body{font-family:sans-serif;padding:20px}h1{font-size:18px;margin-bottom:5px}p{font-size:12px;color:#666;margin-bottom:15px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border:1px solid #ddd;padding:4px 8px;text-align:left}th{background:#f5f5f5}@media print{button{display:none}}</style></head><body><h1>Ogden 850 Basic English Word List</h1><p>Total: 850 words | Date: ${toDateString()}</p><table><thead><tr><th>Word</th><th>Chinese</th><th>Phonetic</th><th>POS</th></tr></thead><tbody>${rows}</tbody></table><p style="text-align:center;margin-top:20px"><button onclick="window.print()" style="padding:10px 30px;font-size:14px">🖨️ 打印 / 导出 PDF</button></p></body></html>`
   const win = window.open('', '_blank', 'width=900,height=700'); win.document.write(html); win.document.close()
 }
 

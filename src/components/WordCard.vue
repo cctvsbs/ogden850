@@ -3,6 +3,14 @@ import { ref, watch, onMounted, onUnmounted, computed } from 'vue'
 import { getExampleStatus } from '@/utils/ogdenValidator'
 import { favoritesService } from '@/services/storageService'
 import phoneticData from '@/data/ogden850-phonetic.json'
+import { playNavSound, playCardFlipSound } from '@/composables/useAudioFeedback'
+import { SYLLABLE_COLORS, renderColoredSyllables as renderColoredSyllablesUtil, renderColoredIPA as renderColoredIPAUtil } from '@/composables/useSyllableRendering'
+import { splitExampleTokens as splitExampleTokensUtil } from '@/composables/useExampleTokens'
+import { frequencyStars } from '@/composables/useFrequencyStars'
+import verbData from '@/data/ogden850-verbs.json'
+
+function isVerb(wordStr) { return verbData[wordStr.toLowerCase()] !== undefined }
+function getVerbInfo(wordStr) { return verbData[wordStr.toLowerCase()] || null }
 
 const props = defineProps({
   word: { type: Object, default: null },
@@ -17,11 +25,8 @@ const isFav = ref(false)
 const slowMode = ref(false)
 const speechRate = ref(1.0)
 
-const syllableColors = ['#4A90D9', '#52B788', '#E8864A', '#D94A8F', '#8B5CF6']
-
 const audioCtx = ref(null)
 function getAudioCtx() { if (!audioCtx.value) audioCtx.value = new (window.AudioContext || window.webkitAudioContext)(); return audioCtx.value }
-function playNavSound() { try { const ctx = getAudioCtx(); const osc = ctx.createOscillator(); const gain = ctx.createGain(); osc.connect(gain); gain.connect(ctx.destination); osc.type = 'sine'; osc.frequency.setValueAtTime(800, ctx.currentTime); osc.frequency.setValueAtTime(600, ctx.currentTime + 0.05); gain.gain.setValueAtTime(0.08, ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1); osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.1) } catch { /* */ } }
 
 // ===== 语音 =====
 let activeUtterance = null
@@ -56,24 +61,21 @@ const isSame = computed(() => { if (!phonInfo.value) return true; const w = phon
 function goPrev() { if (!props.wordList || props.wordList.length === 0) return; const newIdx = props.currentIndex <= 0 ? props.wordList.length - 1 : props.currentIndex - 1; playNavSound(); emit('select-word', props.wordList[newIdx]) }
 function goNext() { if (!props.wordList || props.wordList.length === 0) return; const newIdx = props.currentIndex >= props.wordList.length - 1 ? 0 : props.currentIndex + 1; playNavSound(); emit('select-word', props.wordList[newIdx]) }
 
-function renderColoredSyllables(syllables, stressIdx) { return syllables.map((s, i) => { const c = syllableColors[i % syllableColors.length]; const bold = i === stressIdx ? 'font-weight:800;text-decoration:underline;text-underline-offset:4px;' : ''; return `<span style="color:${c};${bold}">${s}</span>` }).join(' · ') }
-function renderColoredIPA(ipa, stressIdx) { const p = ipa.replace(/^\/|\/$/g, ''); const parts = p.split('.'); const colored = parts.map((part, i) => { const c = syllableColors[i % syllableColors.length]; const bold = i === stressIdx ? 'font-weight:700;text-decoration:underline;text-underline-offset:3px;' : ''; return `<span style="color:${c};${bold}">${part}</span>` }).join(' · '); return `<span style="color:#999">/</span>${colored}<span style="color:#999">/</span>` }
+function isOodWord(word) { const clean = word.toLowerCase().replace(/[.,!?;:'"]/g, ''); return exampleValidations.value.some(v => v.outOfRangeWords.includes(clean)) }
+function splitExampleTokens(sentence) { return splitExampleTokensUtil(sentence) }
 
 watch(() => props.word, async (w) => { clearCardSpeech(); if (w) { isFav.value = await favoritesService.isFavorite(w.id) } else { isFav.value = false } })
 async function toggleFavorite() { if (!props.word) return; if (isFav.value) { await favoritesService.removeFavorite(props.word.id); isFav.value = false } else { await favoritesService.addFavorite(props.word.id); isFav.value = true }; emit('favorite-changed') }
 
 function toggleSpeechRate() { slowMode.value = !slowMode.value; speechRate.value = slowMode.value ? 0.75 : 1.0 }
 
-function frequencyStars(level) { if (!level) return ''; return '★'.repeat(level) + '☆'.repeat(5 - level) }
-function isOodWord(word) { const clean = word.toLowerCase().replace(/[.,!?;:'"]/g, ''); return exampleValidations.value.some(v => v.outOfRangeWords.includes(clean)) }
-function splitExampleTokens(sentence) { const tokens = []; const regex = /(\S+)(\s*)/g; let match; while ((match = regex.exec(sentence)) !== null) { tokens.push({ word: match[1], space: match[2] }) } return tokens }
-
+function toggleFlip() { isFlipped.value = !isFlipped.value; playCardFlipSound() }
 function handleKeydown(e) {
   if (e.key === 'a' || e.key === 'A') { e.preventDefault(); goPrev(); return }
   if (e.key === 'd' || e.key === 'D') { e.preventDefault(); goNext(); return }
   if (e.key === 'f' || e.key === 'F') { e.preventDefault(); toggleFavorite(); return }
   if (e.key === 's' || e.key === 'S') { e.preventDefault(); speakWord(); return }
-  if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); isFlipped.value = !isFlipped.value }
+  if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); toggleFlip(); return }
   if (e.key === 'Escape') { isFlipped.value = false; emit('close') }
 }
 function close() { isFlipped.value = false; clearCardSpeech(); emit('close') }
@@ -92,7 +94,7 @@ onUnmounted(() => { window.removeEventListener('keydown', handleKeydown); clearC
           <button @click.stop="toggleFavorite" class="absolute -top-2 -left-2 sm:-top-3 sm:-left-3 w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center text-xl sm:text-2xl cursor-pointer transition-all hover:scale-110 z-20" :style="{ backgroundColor: 'var(--bg)', color: isFav ? '#f59e0b' : 'var(--text-muted)', boxShadow: '0 4px 20px rgba(0,0,0,0.3)' }" :title="isFav ? '取消收藏 (F)' : '添加收藏 (F)'">{{ isFav ? '⭐' : '☆' }}</button>
           <button @click="close" class="absolute -top-3 -right-3 sm:-top-4 sm:-right-4 w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-base sm:text-lg cursor-pointer transition-transform hover:scale-110 z-20" :style="{ backgroundColor: 'var(--bg)', color: 'var(--text-muted)', boxShadow: '0 4px 20px rgba(0,0,0,0.3)' }">✕</button>
 
-          <div class="relative w-full cursor-pointer select-none" :class="{ 'is-flipped': isFlipped }" style="transform-style: preserve-3d; transition: transform 0.6s ease; min-height: 600px;" :style="isFlipped ? 'transform: rotateY(180deg);' : ''" @click="isFlipped = !isFlipped">
+          <div class="relative w-full cursor-pointer select-none" :class="{ 'is-flipped': isFlipped }" style="transform-style: preserve-3d; transition: transform 0.6s ease; min-height: 600px;" :style="isFlipped ? 'transform: rotateY(180deg);' : ''" @click="toggleFlip">
 
             <!-- ==================== 正面 ==================== -->
             <div class="rounded-2xl sm:rounded-3xl flex flex-col" style="backface-visibility: hidden; min-height: 600px; height: 100%;" :style="{ backgroundColor: 'var(--bg)', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }">
@@ -106,17 +108,17 @@ onUnmounted(() => { window.removeEventListener('keydown', handleKeydown); clearC
               <div class="flex-1 flex flex-col items-center justify-center p-4 sm:p-6">
                 <div v-if="phonInfo" class="w-full max-w-md mx-auto space-y-3 sm:space-y-4">
                   <template v-if="isSame">
-                    <div class="text-center"><p class="text-xl sm:text-2xl font-semibold" v-html="renderColoredSyllables(phonInfo.written.syllables, phonInfo.stress)"></p></div>
-                    <div class="text-center"><p class="text-base sm:text-lg" v-html="renderColoredIPA(phonInfo.written.ipa, phonInfo.stress)"></p></div>
+                    <div class="text-center"><p class="text-xl sm:text-2xl font-semibold" v-html="renderColoredSyllablesUtil(phonInfo.written.syllables, phonInfo.stress)"></p></div>
+                    <div class="text-center"><p class="text-base sm:text-lg" v-html="renderColoredIPAUtil(phonInfo.written.ipa, phonInfo.stress)"></p></div>
                   </template>
                   <template v-else>
                     <div class="grid grid-cols-2 gap-4">
-                      <div class="text-center"><p class="text-xl sm:text-2xl font-semibold" v-html="renderColoredSyllables(phonInfo.written.syllables, phonInfo.stress)"></p></div>
-                      <div class="text-center"><p class="text-xl sm:text-2xl font-semibold" v-html="renderColoredSyllables(phonInfo.spoken.syllables, phonInfo.stress)"></p></div>
+                      <div class="text-center"><p class="text-xl sm:text-2xl font-semibold" v-html="renderColoredSyllablesUtil(phonInfo.written.syllables, phonInfo.stress)"></p></div>
+                      <div class="text-center"><p class="text-xl sm:text-2xl font-semibold" v-html="renderColoredSyllablesUtil(phonInfo.spoken.syllables, phonInfo.stress)"></p></div>
                     </div>
                     <div class="grid grid-cols-2 gap-4">
-                      <div class="text-center"><p class="text-base sm:text-lg" v-html="renderColoredIPA(phonInfo.written.ipa, phonInfo.stress)"></p></div>
-                      <div class="text-center"><p class="text-base sm:text-lg" v-html="renderColoredIPA(phonInfo.spoken.ipa, phonInfo.stress)"></p></div>
+                      <div class="text-center"><p class="text-base sm:text-lg" v-html="renderColoredIPAUtil(phonInfo.written.ipa, phonInfo.stress)"></p></div>
+                      <div class="text-center"><p class="text-base sm:text-lg" v-html="renderColoredIPAUtil(phonInfo.spoken.ipa, phonInfo.stress)"></p></div>
                     </div>
                   </template>
                 </div>
@@ -163,6 +165,17 @@ onUnmounted(() => { window.removeEventListener('keydown', handleKeydown); clearC
                   <p v-if="!exampleValidations[i]?.isCompliant" class="text-[10px] sm:text-xs mt-1" :style="{ color: 'var(--text-muted)' }">⚠️ {{ exampleValidations[i].outOfRangeWords.length }} 个超纲词</p>
                   <p v-else class="text-[10px] sm:text-xs mt-1" :style="{ color: 'var(--success)' }">✅ Ogden 850 合规</p>
                 </div>
+              </div>
+
+              <div v-if="isVerb(word.word)" class="mt-4 sm:mt-5 p-3 sm:p-4 rounded-2xl" :style="{ backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)' }">
+                <p class="text-[10px] sm:text-xs font-semibold mb-1.5 sm:mb-2" :style="{ color: 'var(--accent)' }">📋 动词时态变化</p>
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <div><p class="text-[10px]" :style="{ color: 'var(--text-muted)' }">原形</p><p class="text-sm font-bold" :style="{ color: 'var(--text)' }">{{ getVerbInfo(word.word).base }}</p></div>
+                  <div><p class="text-[10px]" :style="{ color: 'var(--text-muted)' }">过去式</p><p class="text-sm font-bold" :style="{ color: 'var(--danger)' }">{{ getVerbInfo(word.word).past }}</p></div>
+                  <div><p class="text-[10px]" :style="{ color: 'var(--text-muted)' }">过去分词</p><p class="text-sm font-bold" :style="{ color: 'var(--clay)' }">{{ getVerbInfo(word.word).pastParticiple }}</p></div>
+                  <div><p class="text-[10px]" :style="{ color: 'var(--text-muted)' }">现在分词</p><p class="text-sm font-bold" :style="{ color: 'var(--success)' }">{{ getVerbInfo(word.word).presentParticiple }}</p></div>
+                </div>
+                <p v-if="getVerbInfo(word.word).note" class="text-[10px] mt-1.5" :style="{ color: 'var(--text-muted)' }">{{ getVerbInfo(word.word).note }}</p>
               </div>
 
               <div v-if="word.ogden_principle" class="mt-4 sm:mt-5 p-3 sm:p-4 rounded-2xl" :style="{ backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)' }">

@@ -12,51 +12,60 @@ export const useWordsStore = defineStore('words', () => {
   // 学习进度映射表（wordId → progress）
   const progressMap = ref({})
 
+  // 计算属性：带上 progress 信息的单词列表（不修改原始对象）
+  const wordsWithProgress = computed(() =>
+    words.value.map(w => ({
+      ...w,
+      stage: progressMap.value[w.id]?.stage ?? 0,
+      srs: progressMap.value[w.id]?.srs ?? { interval: 0, ease: 2.5, nextReview: null, repetitions: 0 },
+    }))
+  )
+
   // 加载 IndexedDB 中的学习进度
   async function loadProgress() {
     const all = await progressService.getAllProgress()
     all.forEach(p => { progressMap.value[p.wordId] = p })
-    // 同步 stage 到 words
-    words.value.forEach(w => {
-      if (progressMap.value[w.id]) {
-        w.stage = progressMap.value[w.id].stage || 0
-        w.srs = progressMap.value[w.id].srs || { interval: 0, ease: 2.5, nextReview: null, repetitions: 0 }
-      }
-    })
   }
 
   // 获取需要复习的单词（SRS 到期 + 未学过的）
   const dueWords = computed(() => {
     const now = new Date().toISOString()
-    return words.value.filter(w => {
+    return wordsWithProgress.value.filter(w => {
       const p = progressMap.value[w.id]
-      if (!p) return true // 未学过
-      if (!p.srs?.nextReview) return true // 需要复习
-      return p.srs.nextReview <= now // 到期
+      if (!p) return true
+      if (!p.srs?.nextReview) return true
+      return p.srs.nextReview <= now
     })
   })
 
   // 获取未掌握的单词
   const unmasteredWords = computed(() => {
-    return words.value.filter(w => (w.stage || 0) < 5)
+    return wordsWithProgress.value.filter(w => w.stage < 5)
   })
 
   // 获取已掌握的单词
   const masteredWords = computed(() => {
-    return words.value.filter(w => (w.stage || 0) >= 5)
+    return wordsWithProgress.value.filter(w => w.stage >= 5)
   })
 
-  const categories = [
-    { id: 'all',             label: '全部',      count: 850 },
-    { id: 'operations',      label: '操作词',    count: 100 },
-    { id: 'thingsGeneral',   label: '一般事物',  count: 400 },
-    { id: 'thingsPicturable',label: '可图示事物',count: 200 },
-    { id: 'qualitiesGeneral',label: '一般性质',  count: 100 },
-    { id: 'qualitiesOpposite',label: '反义性质', count: 50  },
+  const categoryDefs = [
+    { id: 'all',             label: '全部' },
+    { id: 'operations',      label: '操作词' },
+    { id: 'thingsGeneral',   label: '一般事物' },
+    { id: 'thingsPicturable',label: '可图示事物' },
+    { id: 'qualitiesGeneral',label: '一般性质' },
+    { id: 'qualitiesOpposite',label: '反义性质' },
   ]
 
+  const categories = computed(() =>
+    categoryDefs.map(cat => ({
+      ...cat,
+      count: cat.id === 'all' ? words.value.length : words.value.filter(w => w.category === cat.id).length,
+    }))
+  )
+
   const filteredWords = computed(() => {
-    let result = words.value
+    let result = wordsWithProgress.value
     if (activeCategory.value !== 'all') result = result.filter(w => w.category === activeCategory.value)
     if (searchQuery.value.trim()) {
       const q = searchQuery.value.toLowerCase().trim()
@@ -72,11 +81,6 @@ export const useWordsStore = defineStore('words', () => {
   async function updateWordProgress(wordId, data) {
     await progressService.saveProgress(wordId, data)
     progressMap.value[wordId] = { wordId, ...data }
-    const w = words.value.find(w => w.id === wordId)
-    if (w) {
-      w.stage = data.stage || 0
-      w.srs = data.srs || { interval: 0, ease: 2.5, nextReview: null, repetitions: 0 }
-    }
   }
 
   // 训练模式
@@ -86,7 +90,7 @@ export const useWordsStore = defineStore('words', () => {
   const phasesUnlocked = ref(['flashcard'])
 
   return {
-    words, searchQuery, activeCategory, selectedWord,
+    words, wordsWithProgress, searchQuery, activeCategory, selectedWord,
     filteredWords, categories, progressMap, dueWords, unmasteredWords, masteredWords,
     selectWord, clearSelection, loadProgress, updateWordProgress,
     gameMode, currentPhase, roundsCompleted, phasesUnlocked,

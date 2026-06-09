@@ -1,0 +1,20 @@
+{
+  "be": { "base": "be", "chinese": "是；存在", "past": "was/were", "pastParticiple": "been", "presentParticiple": "being", "note": "不规则变化" },
+  "come": { "base": "come", "chinese": "来", "past": "came", "pastParticiple": "come", "presentParticiple": "coming", "note": "不规则变化" },
+  "do": { "base": "do", "chinese": "做", "past": "did", "pastParticiple": "done", "presentParticiple": "doing", "note": "不规则变化" },
+  "get": { "base": "get", "chinese": "得到；变得", "past": "got", "pastParticiple": "got", "presentParticiple": "getting", "note": "不规则变化" },
+  "give": { "base": "give", "chinese": "给", "past": "gave", "pastParticiple": "given", "presentParticiple": "giving", "note": "不规则变化" },
+  "go": { "base": "go", "chinese": "去", "past": "went", "pastParticiple": "gone", "presentParticiple": "going", "note": "不规则变化" },
+  "have": { "base": "have", "chinese": "有", "past": "had", "pastParticiple": "had", "presentParticiple": "having", "note": "不规则变化" },
+  "keep": { "base": "keep", "chinese": "保持", "past": "kept", "pastParticiple": "kept", "presentParticiple": "keeping", "note": "不规则变化" },
+  "look": { "base": "look", "chinese": "看", "past": "looked", "pastParticiple": "looked", "presentParticiple": "looking", "note": "规则变化" },
+  "make": { "base": "make", "chinese": "做；制造", "past": "made", "pastParticiple": "made", "presentParticiple": "making", "note": "不规则变化" },
+  "put": { "base": "put", "chinese": "放", "past": "put", "pastParticiple": "put", "presentParticiple": "putting", "note": "原形不变" },
+  "say": { "base": "say", "chinese": "说", "past": "said", "pastParticiple": "said", "presentParticiple": "saying", "note": "不规则变化" },
+  "see": { "base": "see", "chinese": "看见", "past": "saw", "pastParticiple": "seen", "presentParticiple": "seeing", "note": "不规则变化" },
+  "take": { "base": "take", "chinese": "拿", "past": "took", "pastParticiple": "taken", "presentParticiple": "taking", "note": "不规则变化" },
+  "think": { "base": "think", "chinese": "想；认为", "past": "thought", "pastParticiple": "thought", "presentParticiple": "thinking", "note": "不规则变化" },
+  "want": { "base": "want", "chinese": "想要", "past": "wanted", "pastParticiple": "wanted", "presentParticiple": "wanting", "note": "规则变化" },
+  "work": { "base": "work", "chinese": "工作", "past": "worked", "pastParticiple": "worked", "presentParticiple": "working", "note": "规则变化" },
+  "know": { "base": "know", "chinese": "知道", "past": "knew", "pastParticiple": "known", "presentParticiple": "knowing", "note": "不规则变化" }
+}

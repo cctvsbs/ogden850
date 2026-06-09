@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useWordsStore } from '@/stores/words'
 import { useRouter } from 'vue-router'
-import { progressService, mistakesService, favoritesService } from '@/services/storageService'
+import { progressService, mistakesService, favoritesService, settingsService } from '@/services/storageService'
 import SearchBar from '@/components/SearchBar.vue'
 import WordList from '@/components/WordList.vue'
 import WordCard from '@/components/WordCard.vue'
@@ -87,8 +87,8 @@ function goToPractice(mode) {
 async function loadStats() {
   totalMastered.value = await progressService.getMasteredWords().then(arr => arr.length).catch(() => 0)
   todayLearned.value = await progressService.getTodayLearned().catch(() => 0)
-  const saved = localStorage.getItem('ogden850-streak-count')
-  if (saved) streakDays.value = parseInt(saved)
+  const saved = await settingsService.get('ogden850-streak-count')
+  if (saved) streakDays.value = saved
 }
 
 onMounted(async () => {
@@ -103,13 +103,13 @@ onMounted(async () => {
   // 预加载语音列表
   window.speechSynthesis.getVoices()
   const today = new Date().toISOString().slice(0, 10)
-  const lastVisit = localStorage.getItem('ogden850-streak')
+  const lastVisit = await settingsService.get('ogden850-streak')
   if (lastVisit !== today) {
     const lastDate = lastVisit ? new Date(lastVisit) : null
     const diff = lastDate ? Math.floor((new Date() - lastDate) / (1000 * 60 * 60 * 24)) : 999
-    const count = diff === 1 ? parseInt(localStorage.getItem('ogden850-streak-count') || '0') + 1 : 1
-    localStorage.setItem('ogden850-streak', today)
-    localStorage.setItem('ogden850-streak-count', count)
+    const count = diff === 1 ? (await settingsService.get('ogden850-streak-count') || 0) + 1 : 1
+    await settingsService.set('ogden850-streak', today)
+    await settingsService.set('ogden850-streak-count', count)
     streakDays.value = count
   }
 })

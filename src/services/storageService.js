@@ -3,12 +3,14 @@ import Dexie from 'dexie'
 // ===== 数据库初始化 =====
 const db = new Dexie('ogden850')
 
-db.version(2).stores({
+db.version(3).stores({
   progress: 'wordId, stage, nextReview',
   stats: 'key',
   settings: 'key',
   mistakes: '++id, wordId, mode, createdAt',
-  favorites: 'wordId, createdAt'
+  favorites: 'wordId, createdAt',
+  imageCache: 'key, updatedAt',
+  exampleCache: 'key, updatedAt'
 })
 
 // ===== 单词进度 =====
@@ -56,8 +58,11 @@ export const statsService = {
     await db.stats.put({ key, value })
   },
   async incrementStat(key, amount = 1) {
-    const current = await this.getStat(key)
-    await db.stats.put({ key, value: current + amount })
+    await db.transaction('rw', db.stats, async () => {
+      const record = await db.stats.get(key)
+      const current = record?.value ?? 0
+      await db.stats.put({ key, value: current + amount })
+    })
   },
   async getAllStats() {
     const records = await db.stats.toArray()
@@ -164,7 +169,7 @@ export const backupService = {
     const mistakes = await db.mistakes.toArray()
     const favorites = await db.favorites.toArray()
     return {
-      version: 2,
+      version: 3,
       date: new Date().toISOString(),
       progress,
       stats,

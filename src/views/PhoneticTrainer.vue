@@ -1,10 +1,14 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useWordsStore } from '@/stores/words'
 import phoneticData from '@/data/ogden850-phonetic.json'
 import { favoritesService, mistakesService } from '@/services/storageService'
+import { renderColoredSyllables, renderColoredIPA } from '@/composables/useSyllableRendering'
+import { playNavSound } from '@/composables/useAudioFeedback'
+import { useFavorites } from '@/composables/useFavorites'
 
 const store = useWordsStore()
+const { isFavorite, toggleFavorite: toggleFavService } = useFavorites()
 
 const viewMode = ref('list')
 const searchQuery = ref('')
@@ -13,12 +17,10 @@ const selectedWord = ref(null)
 const favoriteIds = ref(new Set())
 const mistakeWordIds = ref([])
 const isMuted = ref(false)
-const speechRate = ref(0.85) // 默认 0.85，对应 1.0x 档位
+const speechRate = ref(0.85)
 const rateOptions = [0.5, 0.75, 1.0, 1.25, 1.5]
 const rateLabels = ['0.5x', '0.75x', '1x', '1.25x', '1.5x']
-const currentRateIndex = ref(2) // 默认 1x
-
-const syllableColors = ['#4A90D9', '#52B788', '#E8864A', '#D94A8F', '#8B5CF6']
+const currentRateIndex = ref(2)
 
 const categories = [
   { id: 'all', label: '全部' },
@@ -31,28 +33,10 @@ const categories = [
   { id: 'mistakes', label: '错题集' },
 ]
 
-const audioCtx = ref(null)
-function getAudioCtx() {
-  if (!audioCtx.value) audioCtx.value = new (window.AudioContext || window.webkitAudioContext)()
-  return audioCtx.value
-}
-function playNavSound() {
-  if (isMuted.value) return
-  try {
-    const ctx = getAudioCtx()
-    const osc = ctx.createOscillator(); const gain = ctx.createGain()
-    osc.connect(gain); gain.connect(ctx.destination)
-    osc.type = 'sine'
-    osc.frequency.setValueAtTime(800, ctx.currentTime)
-    osc.frequency.setValueAtTime(600, ctx.currentTime + 0.05)
-    gain.gain.setValueAtTime(0.08, ctx.currentTime)
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1)
-    osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.1)
-  } catch { /* */ }
-}
-
-let isSpeaking = false; let lastSpokenText = ''
+let isSpeaking = false
+let lastSpokenText = ''
 let speechTimeout = null
+
 function speakWord(word) {
   if (!word) return
   if (isSpeaking && word === lastSpokenText) return
@@ -64,7 +48,6 @@ function speakWord(word) {
   utterance.rate = speechRate.value
   utterance.onend = () => { isSpeaking = false }
   utterance.onerror = () => { isSpeaking = false }
-  // 超时兜底：3 秒还没触发 onend 就重置状态
   speechTimeout = setTimeout(() => { isSpeaking = false }, 3000)
   window.speechSynthesis.speak(utterance)
 }
@@ -96,49 +79,6 @@ function isDifferent(phon) {
   return phon.written.syllables.join(',') !== phon.spoken.syllables.join(',')
 }
 
-function renderSyls(syls, stress) {
-  return syls.map((s, i) => {
-    const c = syllableColors[i % syllableColors.length]
-    const b = i === stress ? 'font-weight:800;text-decoration:underline;text-underline-offset:4px;' : ''
-    return `<span style="color:${c};background:${c}18;${b}">${s}</span>`
-  }).join(' ')
-}
-
-function renderPhon(ipa, stress) {
-  let p = ipa.replace(/^\/|\/$/g, '').trim();
-  let parts = p.includes('.') ? p.split('.') : p.split(' ');
-  parts = parts.map(s => s.trim()).filter(Boolean);
-  const colored = parts.map((part, i) => {
-    const stressMatch = part.match(/^[ˈˌ]/);
-    const stressSymbol = stressMatch ? stressMatch[0] : '';
-    const pureCleanPart = part.replace(/^[ˈˌ]/, '');
-    const c = syllableColors[i % syllableColors.length];
-    const isStressed = i === stress;
-    const baseStyle = `color:${c};`;
-    const underlineStyle = isStressed ? 'font-weight:700;text-decoration:underline;text-underline-offset:3px;' : '';
-    let partHtml = '';
-    if (stressSymbol) {
-      partHtml += `<span style="${baseStyle}">${stressSymbol}</span>`;
-    }
-    partHtml += `<span style="${baseStyle}${underlineStyle}">${pureCleanPart}</span>`;
-    return partHtml;
-  }).join(' ');
-  return `<span style="color:#999">/</span>${colored}<span style="color:#999">/</span>`;
-}
-
-function isFavorite(id) { return favoriteIds.value.has(id) }
-async function toggleFavorite(e, wordId) {
-  e.stopPropagation()
-  if (isFavorite(wordId)) {
-    await favoritesService.removeFavorite(wordId)
-    favoriteIds.value.delete(wordId)
-  } else {
-    await favoritesService.addFavorite(wordId)
-    favoriteIds.value.add(wordId)
-  }
-  favoriteIds.value = new Set(favoriteIds.value)
-}
-
 const currentPhonInfo = computed(() => {
   if (!selectedWord.value) return null
   return getPhonInfo(selectedWord.value.word)
@@ -146,7 +86,6 @@ const currentPhonInfo = computed(() => {
 
 function selectWord(word) {
   selectedWord.value = word
-  // 移动端选中后自动滚动到可视区域
   if (window.innerWidth < 768 && word) {
     nextTick(() => {
       const el = document.querySelector(`[data-word-id="${word.id}"]`)
@@ -154,8 +93,6 @@ function selectWord(word) {
     })
   }
 }
-
-import { nextTick } from 'vue'
 
 function navigateWord(dir) {
   const list = filteredWords.value
@@ -172,12 +109,18 @@ function navigateWord(dir) {
   }
 }
 
+async function toggleFavoriteInList(e, wordId) {
+  e.stopPropagation()
+  await toggleFavService(wordId)
+  favoriteIds.value = new Set(await favoritesService.getAllFavoriteIds())
+}
+
 function handleKeydown(e) {
   if (document.activeElement?.tagName === 'INPUT') return
   if (e.key === 'a' || e.key === 'A') { e.preventDefault(); navigateWord(-1); return }
   if (e.key === 'd' || e.key === 'D') { e.preventDefault(); navigateWord(1); return }
   if (e.key === 's' || e.key === 'S') { e.preventDefault(); if (selectedWord.value) speakWord(selectedWord.value.word); return }
-  if (e.key === 'f' || e.key === 'F') { e.preventDefault(); if (selectedWord.value) toggleFavorite(new Event('click'), selectedWord.value.id); return }
+  if (e.key === 'f' || e.key === 'F') { e.preventDefault(); if (selectedWord.value) toggleFavoriteInList(new Event('click'), selectedWord.value.id); return }
   if (e.key === 'Escape') { e.preventDefault(); selectedWord.value = null; return }
 }
 
@@ -197,7 +140,7 @@ onUnmounted(() => {
 
 <template>
   <div class="w-full max-w-2xl mx-auto px-3 sm:px-6 py-4 sm:py-8 flex flex-col" style="height: calc(100vh - 100px);">
-    
+
     <!-- 标题区 -->
     <div class="text-center flex-shrink-0 mb-3">
       <h1 class="text-lg sm:text-xl font-bold word-display" :style="{ color: 'var(--text)' }">🔤 英语发音可视化训练</h1>
@@ -235,13 +178,13 @@ onUnmounted(() => {
     <!-- ========== 音节划分结果面板 ========== -->
     <div class="flex-shrink-0 rounded-2xl p-6 sm:p-8 text-center mb-3"
       :style="{ backgroundColor: 'var(--bg)', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }">
-      
+
       <div v-if="!selectedWord" class="py-12">
         <p class="text-base sm:text-lg" :style="{ color: 'var(--text-muted)' }">👆 输入单词搜索，或从下方列表中选择</p>
       </div>
 
       <template v-if="selectedWord && currentPhonInfo">
-        
+
         <!-- 单词名 + 发音小喇叭 + 变速 -->
         <div class="flex items-center justify-center gap-3 mb-5">
           <span class="text-2xl sm:text-3xl font-bold" :style="{ color: 'var(--text)' }">{{ selectedWord.word }}</span>
@@ -266,10 +209,10 @@ onUnmounted(() => {
         <template v-if="!isDifferent(currentPhonInfo)">
           <div class="mb-5">
             <p class="text-sm sm:text-base font-medium mb-3" style="color:#999">📖 书面 · 🗣️ 口语（相同）</p>
-            <p class="text-3xl sm:text-4xl font-semibold leading-relaxed" v-html="renderSyls(currentPhonInfo.written.syllables, currentPhonInfo.stress)"></p>
+            <p class="text-3xl sm:text-4xl font-semibold leading-relaxed" v-html="renderColoredSyllables(currentPhonInfo.written.syllables, currentPhonInfo.stress)"></p>
           </div>
           <div class="mb-5">
-            <p class="text-xl sm:text-2xl leading-relaxed" v-html="renderPhon(currentPhonInfo.written.ipa, currentPhonInfo.stress)"></p>
+            <p class="text-xl sm:text-2xl leading-relaxed" v-html="renderColoredIPA(currentPhonInfo.written.ipa, currentPhonInfo.stress)"></p>
           </div>
         </template>
 
@@ -278,19 +221,19 @@ onUnmounted(() => {
           <div class="grid grid-cols-2 gap-6 mb-5">
             <div class="text-center">
               <p class="text-sm sm:text-base font-medium mb-3" style="color:#999">📖 书面</p>
-              <p class="text-3xl sm:text-4xl font-semibold leading-relaxed" v-html="renderSyls(currentPhonInfo.written.syllables, currentPhonInfo.stress)"></p>
+              <p class="text-3xl sm:text-4xl font-semibold leading-relaxed" v-html="renderColoredSyllables(currentPhonInfo.written.syllables, currentPhonInfo.stress)"></p>
             </div>
             <div class="text-center">
               <p class="text-sm sm:text-base font-medium mb-3" style="color:#999">🗣️ 口语</p>
-              <p class="text-3xl sm:text-4xl font-semibold leading-relaxed" v-html="renderSyls(currentPhonInfo.spoken.syllables, currentPhonInfo.stress)"></p>
+              <p class="text-3xl sm:text-4xl font-semibold leading-relaxed" v-html="renderColoredSyllables(currentPhonInfo.spoken.syllables, currentPhonInfo.stress)"></p>
             </div>
           </div>
           <div class="grid grid-cols-2 gap-6 mb-5">
             <div class="text-center">
-              <p class="text-xl sm:text-2xl leading-relaxed" v-html="renderPhon(currentPhonInfo.written.ipa, currentPhonInfo.stress)"></p>
+              <p class="text-xl sm:text-2xl leading-relaxed" v-html="renderColoredIPA(currentPhonInfo.written.ipa, currentPhonInfo.stress)"></p>
             </div>
             <div class="text-center">
-              <p class="text-xl sm:text-2xl leading-relaxed" v-html="renderPhon(currentPhonInfo.spoken.ipa, currentPhonInfo.stress)"></p>
+              <p class="text-xl sm:text-2xl leading-relaxed" v-html="renderColoredIPA(currentPhonInfo.spoken.ipa, currentPhonInfo.stress)"></p>
             </div>
           </div>
         </template>
@@ -308,12 +251,11 @@ onUnmounted(() => {
     </div>
 
     <!-- ========== 单词列表 ========== -->
-    <!-- PC/平板：纵向滚动 -->
     <div
       class="flex-1 overflow-y-auto hide-scrollbar rounded-2xl p-4 word-list-desktop"
       :class="{ 'word-list-mobile': true }"
       :style="{ backgroundColor: 'var(--bg)', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }">
-      
+
       <div v-if="viewMode === 'list'" class="space-y-1 word-list-inner">
         <div v-for="word in filteredWords" :key="word.id"
           :data-word-id="word.id"
@@ -325,7 +267,7 @@ onUnmounted(() => {
             <span class="text-[10px] sm:text-xs" :style="{ color: 'var(--text-muted)' }">{{ word.phonetic }}</span>
           </div>
           <div class="flex items-center gap-2">
-            <button @click="(e) => toggleFavorite(e, word.id)" class="text-sm cursor-pointer flex-shrink-0"
+            <button @click="(e) => toggleFavoriteInList(e, word.id)" class="text-sm cursor-pointer flex-shrink-0"
               :style="{ color: isFavorite(word.id) ? '#f59e0b' : 'var(--text-muted)' }">{{ isFavorite(word.id) ? '⭐' : '☆' }}</button>
             <span class="text-xs" :style="{ color: 'var(--text-secondary)' }">{{ word.chinese }}</span>
           </div>
@@ -339,7 +281,7 @@ onUnmounted(() => {
           @click="selectWord(word)"
           class="p-3 rounded-xl cursor-pointer transition-all duration-200 border relative word-list-item"
           :style="selectedWord?.id === word.id ? { backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--accent)' } : { backgroundColor: 'var(--bg)', borderColor: 'var(--border)' }">
-          <button @click="(e) => toggleFavorite(e, word.id)" class="absolute top-1 right-1 text-xs cursor-pointer"
+          <button @click="(e) => toggleFavoriteInList(e, word.id)" class="absolute top-1 right-1 text-xs cursor-pointer"
             :style="{ color: isFavorite(word.id) ? '#f59e0b' : 'var(--text-muted)' }">{{ isFavorite(word.id) ? '⭐' : '☆' }}</button>
           <p class="text-base font-bold" :style="{ color: 'var(--text)' }">{{ word.word }}</p>
           <p class="text-[10px]" :style="{ color: 'var(--text-muted)' }">{{ word.phonetic }}</p>
@@ -384,14 +326,14 @@ kbd {
     scroll-snap-type: x mandatory;
     padding: 8px 4px;
   }
-  
+
   .word-list-mobile .word-list-inner {
     display: flex !important;
     flex-wrap: nowrap !important;
     gap: 8px;
     width: max-content;
   }
-  
+
   .word-list-mobile .word-list-item {
     flex-shrink: 0;
     scroll-snap-align: center;
@@ -399,14 +341,14 @@ kbd {
     max-width: 200px;
     white-space: normal;
   }
-  
+
   /* 列表模式下也变成横向卡片 */
   .word-list-mobile .space-y-1.word-list-inner {
     display: flex !important;
     flex-wrap: nowrap !important;
     gap: 8px;
   }
-  
+
   .word-list-mobile .space-y-1 .word-list-item {
     flex-shrink: 0;
     scroll-snap-align: center;
@@ -417,7 +359,7 @@ kbd {
     gap: 4px;
     padding: 12px;
   }
-  
+
   .word-list-mobile .space-y-1 .word-list-item > div:last-child {
     flex-direction: row;
     width: 100%;

@@ -1,4 +1,5 @@
 import rawWords from '@/data/ogden850.json'
+import { FUNCTION_WORDS } from '@/data/functionWords'
 
 // Ogden 850 词表 Set
 const ogdenSet = new Set(rawWords.map(w => w.word.toLowerCase()))
@@ -54,9 +55,7 @@ rawWords.forEach(w => {
 })
 Object.values(irregularForms).flat().forEach(f => ogdenSet.add(f.toLowerCase()))
 
-// 常见功能词（可能不在 850 内但必须的）
-const functionWords = ['a','an','the','i','me','my','mine','you','your','yours','he','him','his','she','her','hers','it','its','we','us','our','ours','they','them','their','theirs','this','that','these','those','who','whom','whose','which','what','to','for','with','from','on','in','at','by','of','and','or','but','not','if','so','as','than','when','where','how','why','very','too','just','only','also','even','still','yet','all','some','any','no','every','each','both','few','more','most','much','many','other','such','there','here','now','then','always','never','often','sometimes','up','down','out','over','under','off','back','again','away','well','is','am','are','was','were','be','been','being','have','has','had','having','do','does','did','doing','will','would','can','could','may','might','must','shall','should','let','make','made','get','got','go','went','gone','going','come','came','coming','take','took','taken','taking','give','gave','given','giving','see','saw','seen','seeing','say','says','said','saying']
-functionWords.forEach(w => ogdenSet.add(w.toLowerCase()))
+FUNCTION_WORDS.forEach(w => ogdenSet.add(w.toLowerCase()))
 
 /**
  * 校验英文句子

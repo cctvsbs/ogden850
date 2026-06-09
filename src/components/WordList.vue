@@ -1,6 +1,9 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { favoritesService } from '@/services/storageService'
+import { getPosTag, getPosColor } from '@/utils/posUtils'
+import { frequencyStars } from '@/composables/useFrequencyStars'
+import { useFavorites } from '@/composables/useFavorites'
 
 const props = defineProps({
   words: { type: Array, default: () => [] },
@@ -9,51 +12,19 @@ const props = defineProps({
 
 const emit = defineEmits(['select', 'favorite-changed'])
 
-function getPosTag(category) {
-  const map = { operations: '操作词', thingsGeneral: '名词', thingsPicturable: '名词', qualitiesGeneral: '形容词', qualitiesOpposite: '形容词' }
-  return map[category] || ''
-}
-
-function getPosColor(category) {
-  const map = { operations: '#409EFF', thingsGeneral: '#67c23a', thingsPicturable: '#67c23a', qualitiesGeneral: '#e6a23c', qualitiesOpposite: '#f56c6c' }
-  return map[category] || '#909399'
-}
-
-function frequencyStars(level) {
-  if (!level) return ''
-  return '★'.repeat(level) + '☆'.repeat(5 - level)
-}
-
-const favoriteIds = ref(new Set())
+const { isFavorite, toggleFavorite: toggleFavService, loadFavorites } = useFavorites()
 
 onMounted(async () => {
-  const ids = await favoritesService.getAllFavoriteIds()
-  favoriteIds.value = new Set(ids)
+  await loadFavorites()
 })
 
-async function refreshFavorites() {
-  const ids = await favoritesService.getAllFavoriteIds()
-  favoriteIds.value = new Set(ids)
-}
-
-function isFavorite(wordId) {
-  return favoriteIds.value.has(wordId)
-}
-
-async function toggleFavorite(e, wordId) {
+async function toggleFavoriteInList(e, wordId) {
   e.stopPropagation()
-  if (isFavorite(wordId)) {
-    await favoritesService.removeFavorite(wordId)
-    favoriteIds.value.delete(wordId)
-  } else {
-    await favoritesService.addFavorite(wordId)
-    favoriteIds.value.add(wordId)
-  }
-  favoriteIds.value = new Set(favoriteIds.value)
+  await toggleFavService(wordId)
   emit('favorite-changed')
 }
 
-defineExpose({ refreshFavorites })
+defineExpose({ refreshFavorites: loadFavorites })
 </script>
 
 <template>
@@ -69,7 +40,7 @@ defineExpose({ refreshFavorites })
         class="word-card relative"
         :style="{ backgroundColor: 'var(--bg)', boxShadow: 'var(--shadow-sm)', borderColor: 'var(--border)' }"
       >
-        <button @click="(e) => toggleFavorite(e, word.id)"
+        <button @click="(e) => toggleFavoriteInList(e, word.id)"
           class="absolute top-2 right-2 w-6 h-6 sm:w-7 sm:h-7 rounded-full flex items-center justify-center text-sm cursor-pointer transition-all hover:scale-110 z-10"
           :style="{ backgroundColor: 'transparent', color: isFavorite(word.id) ? '#f59e0b' : 'var(--text-muted)' }"
           :title="isFavorite(word.id) ? '取消收藏' : '添加收藏'">{{ isFavorite(word.id) ? '⭐' : '☆' }}</button>
